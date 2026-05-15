@@ -374,11 +374,23 @@ def mark_dragged(ptA: Slvs_Entity):
     Slvs_MarkDragged(ptA)
 
 def solve_sketch(grouph: int, calculateFaileds: bool):
+    # Release the GIL during the solve so other Python threads (notably the
+    # asyncio event loop in a parallel coroutine) can run. The underlying
+    # `Slvs_SolveSketch` is declared `nogil` in `slvs.h` and touches no
+    # Python objects; without `with nogil:` here, the GIL would be held for
+    # the duration of the solve and starve every other coroutine — exactly
+    # the bug that left the viz server stuck at ~7 broadcasts/sec when the
+    # delta robot's solve took ~45 ms per tick.
     cdef Slvs_hConstraint *badp = NULL
+    cdef Slvs_hGroup hg = grouph
+    cdef Slvs_SolveResult result
     if not calculateFaileds:
-        return Slvs_SolveSketch(grouph, NULL)
+        with nogil:
+            result = Slvs_SolveSketch(hg, NULL)
+        return result
     else:
-        result = Slvs_SolveSketch(grouph, &badp)
+        with nogil:
+            result = Slvs_SolveSketch(hg, &badp)
         bad = []
         if badp != NULL:
             for i in range(0, result.nbad):

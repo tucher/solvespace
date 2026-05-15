@@ -90,6 +90,8 @@ cdef extern from "slvs.h" nogil:
     Slvs_SolveResult Slvs_SolveSketch(Slvs_hGroup hg, Slvs_hConstraint **bad) nogil
     double Slvs_GetParamValue(int ph)
     double Slvs_SetParamValue(int ph, double value)
+    double Slvs_GetConstraintValue(int ch)
+    void Slvs_SetConstraintValue(int ch, double value)
     void Slvs_ClearSketch()
 
     cdef Slvs_Entity _E_NONE "SLVS_E_NONE"
@@ -386,6 +388,12 @@ def get_param_value(ph: int):
 
 def set_param_value(ph: int, value: float):
     Slvs_SetParamValue(ph, value)
+
+def get_constraint_value(ch: int):
+    return Slvs_GetConstraintValue(ch)
+
+def set_constraint_value(ch: int, value: float):
+    Slvs_SetConstraintValue(ch, value)
 
 def clear_sketch():
     Slvs_ClearSketch()

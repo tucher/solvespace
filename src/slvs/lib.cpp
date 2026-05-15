@@ -985,6 +985,23 @@ void Slvs_SetParamValue(uint32_t ph, double value)
     p->val = value;
 }
 
+void Slvs_SetConstraintValue(uint32_t ch, double value)
+{
+    ConstraintBase* c = SK.constraint.FindById(hConstraint { ch });
+    c->valA = value;
+    // Also update the constraint's parameter if it exists
+    if(c->valP.v) {
+        Param* p = SK.param.FindById(c->valP);
+        p->val = value;
+    }
+}
+
+double Slvs_GetConstraintValue(uint32_t ch)
+{
+    ConstraintBase* c = SK.constraint.FindById(hConstraint { ch });
+    return c->valA;
+}
+
 void Slvs_Solve(Slvs_System *ssys, uint32_t shg)
 {
     SYS.Clear();

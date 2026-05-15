@@ -497,6 +497,9 @@ DLL Slvs_Constraint Slvs_Dragged(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity w
 DLL double Slvs_GetParamValue(uint32_t ph);
 DLL void Slvs_SetParamValue(uint32_t ph, double value);
 
+DLL double Slvs_GetConstraintValue(uint32_t ch);
+DLL void Slvs_SetConstraintValue(uint32_t ch, double value);
+
 DLL void Slvs_Solve(Slvs_System *sys, uint32_t hg);
 DLL void Slvs_MarkDragged(Slvs_Entity ptA);
 /**

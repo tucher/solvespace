@@ -278,3 +278,9 @@ def get_param_value(ph: int) -> float:
 
 def set_param_value(ph: int, value: float) -> None:
     ...
+
+def get_constraint_value(ch: int) -> float:
+    ...
+
+def set_constraint_value(ch: int, value: float) -> None:
+    ...

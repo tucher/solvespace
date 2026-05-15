@@ -232,11 +232,14 @@ def add_base_2d(grouph: int) -> Slvs_Entity:
     return Slvs_AddBase2D(grouph)
 
 # constraints
-def add_constraint(grouph: int, c_type: int, workplane: Slvs_Entity, val: float, ptA: Slvs_Entity = E_NONE,
+def add_constraint(grouph: int, c_type, workplane: Slvs_Entity, val: float, ptA: Slvs_Entity = E_NONE,
         ptB: Slvs_Entity = E_NONE, entityA: Slvs_Entity = E_NONE,
         entityB: Slvs_Entity = E_NONE, entityC: Slvs_Entity = E_NONE,
         entityD: Slvs_Entity = E_NONE, other: int = 0, other2: int = 0) -> Slvs_Constraint:
-    return Slvs_AddConstraint(grouph, c_type, workplane, val, ptA, ptB, entityA, entityB, entityC, entityD, other, other2)
+    # `c_type` is intentionally untyped: callers commonly pass `ConstraintType`
+    # (IntEnum), which Cython 3.2+ refuses to coerce to a typed `int` parameter
+    # even though `IntEnum` is `int`-subclass. Coerce explicitly here.
+    return Slvs_AddConstraint(grouph, int(c_type), workplane, val, ptA, ptB, entityA, entityB, entityC, entityD, other, other2)
 
 def coincident(grouph: int, entityA: Slvs_Entity, entityB: Slvs_Entity, workplane: Slvs_Entity = E_FREE_IN_3D) -> Slvs_Constraint:
     return Slvs_Coincident(grouph, entityA, entityB, workplane)

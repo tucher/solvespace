@@ -892,7 +892,17 @@ Slvs_SolveResult Slvs_SolveSketch(uint32_t shg, Slvs_hConstraint **bad = nullptr
         // correctness issues, it does waste memory, so identify this case and regenerate
         // only if we actually need to.
         if(c->valP.v) {
-            SYS.param.Add(SK.GetParam(c->valP));
+            // Reset `known=false` so the solver treats this constraint-internal
+            // param as an unknown on re-solve. `System::Solve` sets `known=true`
+            // on every solved param at the end of a successful solve, and
+            // `Expr::DeepCopyWithParamsAsPointers` folds any `known` param into
+            // a CONSTANT. Without this reset, on the second `Slvs_SolveSketch`
+            // call PT_ON_LINE / PARALLEL / SAME_ORIENTATION constraint params
+            // would be frozen at their previous values → INCONSISTENT.
+            // Mirrors the entity-param reset above.
+            Param *p = SK.GetParam(c->valP);
+            p->known = false;
+            SYS.param.Add(p);
             continue;
         }
         // If `valP` is 0, this is either a constraint which doesn't have a param, or one
@@ -900,7 +910,9 @@ Slvs_SolveResult Slvs_SolveSketch(uint32_t shg, Slvs_hConstraint **bad = nullptr
         // This generates at most a single additional param
         c->Generate(&SK.param);
         if(c->valP.v) {
-            SYS.param.Add(SK.GetParam(c->valP));
+            Param *p = SK.GetParam(c->valP);
+            p->known = false;
+            SYS.param.Add(p);
 
             if(Slvs_CanInitiallySatisfy(*c)) {
                 c->ModifyToSatisfy();

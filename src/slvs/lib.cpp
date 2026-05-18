@@ -1014,6 +1014,26 @@ double Slvs_GetConstraintValue(uint32_t ch)
     return c->valA;
 }
 
+void Slvs_SetConstraintGroup(uint32_t ch, uint32_t new_group)
+{
+    // Move a constraint to a different group. Used by clients (e.g.
+    // pyactiongraph's spatial-affector layer) that want to enable/disable
+    // individual constraints at runtime: park them in an unused group to
+    // exclude from solves, move back to the active group to re-enable.
+    // The solver filters by exact `c->group == g->h` match in three
+    // iteration sites (Slvs_SolveSketch param-collection, System::
+    // WriteEquationsExceptFor, System::FindWhichToRemoveToFixJacobian),
+    // so this single setter is sufficient.
+    ConstraintBase* c = SK.constraint.FindById(hConstraint { ch });
+    c->group.v = new_group;
+}
+
+uint32_t Slvs_GetConstraintGroup(uint32_t ch)
+{
+    ConstraintBase* c = SK.constraint.FindById(hConstraint { ch });
+    return c->group.v;
+}
+
 void Slvs_Solve(Slvs_System *ssys, uint32_t shg)
 {
     SYS.Clear();

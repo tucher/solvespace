@@ -92,6 +92,8 @@ cdef extern from "slvs.h" nogil:
     double Slvs_SetParamValue(int ph, double value)
     double Slvs_GetConstraintValue(int ch)
     void Slvs_SetConstraintValue(int ch, double value)
+    uint32_t Slvs_GetConstraintGroup(uint32_t ch)
+    void Slvs_SetConstraintGroup(uint32_t ch, uint32_t new_group)
     void Slvs_ClearSketch()
 
     cdef Slvs_Entity _E_NONE "SLVS_E_NONE"
@@ -409,6 +411,20 @@ def get_constraint_value(ch: int):
 
 def set_constraint_value(ch: int, value: float):
     Slvs_SetConstraintValue(ch, value)
+
+def get_constraint_group(ch: int) -> int:
+    return Slvs_GetConstraintGroup(ch)
+
+def set_constraint_group(ch: int, new_group: int):
+    """Move a constraint to a different group.
+
+    Used to enable/disable constraints at runtime: parking a constraint
+    in an unused group excludes it from the solve; moving it back to
+    an active group re-enables it. The solver filters constraints by
+    exact group match in three iteration sites; this single setter
+    flips participation for all of them.
+    """
+    Slvs_SetConstraintGroup(ch, new_group)
 
 def clear_sketch():
     Slvs_ClearSketch()

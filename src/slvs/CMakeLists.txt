@@ -4,13 +4,13 @@ include(GNUInstallDirs)
 add_library(slvs-interface INTERFACE)
 target_sources(slvs-interface INTERFACE lib.cpp)
 target_compile_definitions(slvs-interface INTERFACE -DLIBRARY)
-target_include_directories(slvs-interface INTERFACE ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(slvs-interface INTERFACE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(slvs-interface INTERFACE slvs-solver mimalloc-static)
 
 if(ENABLE_PYTHON_LIB)
     add_custom_command(
         OUTPUT cylib.c
-        COMMAND cython lib.pyx -o ${CMAKE_CURRENT_BINARY_DIR}/cylib.c --include-dir ${CMAKE_SOURCE_DIR}/include --module-name solvespace
+        COMMAND cython lib.pyx -o ${CMAKE_CURRENT_BINARY_DIR}/cylib.c --include-dir ${PROJECT_SOURCE_DIR}/include --module-name solvespace
         DEPENDS lib.pyx
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
@@ -25,7 +25,22 @@ if(ENABLE_PYTHON_LIB)
         Python::Module
     )
     set_target_properties(slvs-py PROPERTIES LIBRARY_OUTPUT_NAME solvespace)
-    if(SKBUILD)
+    # Where to install the slvs-py module + its Python shim files.
+    # Honour an external `SLVS_PY_DESTINATION` override first — used
+    # by embedding builds that want the module at e.g.
+    # `<pkg>/_slvs/` instead of the top-level. Falls back to the
+    # original standalone-build behaviour otherwise.
+    if(DEFINED SLVS_PY_DESTINATION)
+        install(TARGETS slvs-py
+            DESTINATION ${SLVS_PY_DESTINATION}
+            COMPONENT   python
+        )
+        install(
+            DIRECTORY ${PROJECT_SOURCE_DIR}/python/slvs/
+            DESTINATION ${SLVS_PY_DESTINATION}
+            COMPONENT   python
+        )
+    elseif(SKBUILD)
         install(TARGETS slvs-py
             DESTINATION ${SKBUILD_PROJECT_NAME}
             COMPONENT   python
@@ -36,7 +51,7 @@ if(ENABLE_PYTHON_LIB)
             COMPONENT   python
         )
         install(
-            DIRECTORY ${CMAKE_SOURCE_DIR}/python/slvs/
+            DIRECTORY ${PROJECT_SOURCE_DIR}/python/slvs/
             DESTINATION "slvs"
             COMPONENT   python
         )
@@ -63,10 +78,10 @@ add_library(slvs SHARED)
 target_compile_definitions(slvs PRIVATE -DEXPORT_DLL)
 target_link_libraries(slvs PRIVATE slvs-interface)
 set_target_properties(slvs PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(slvs PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(slvs PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 set_target_properties(slvs PROPERTIES
-    PUBLIC_HEADER ${CMAKE_SOURCE_DIR}/include/slvs.h
+    PUBLIC_HEADER ${PROJECT_SOURCE_DIR}/include/slvs.h
     VERSION ${PROJECT_VERSION}
     SOVERSION 1
 )

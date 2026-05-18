@@ -94,7 +94,7 @@ target_include_directories(slvs-solver INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Needed for CI
-file(WRITE ${CMAKE_BINARY_DIR}/version.env "\
+file(WRITE ${PROJECT_BINARY_DIR}/version.env "\
 VERSION_MAJOR=${PROJECT_VERSION_MAJOR}\n\
 VERSION_MINOR=${PROJECT_VERSION_MINOR}\n\
 VERSION_PATCH=0\n\
@@ -188,12 +188,12 @@ if(ENABLE_GUI OR ENABLE_CLI)
         set(output_po  ${CMAKE_CURRENT_SOURCE_DIR}/../res/locales/en_US.po)
         file(GLOB locale_pos ${CMAKE_CURRENT_SOURCE_DIR}/../res/locales/*.po)
 
-        string(REPLACE ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}
+        string(REPLACE ${PROJECT_SOURCE_DIR} ${PROJECT_BINARY_DIR}
             gen_output_pot ${output_pot}.gen)
-        string(REPLACE ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}
+        string(REPLACE ${PROJECT_SOURCE_DIR} ${PROJECT_BINARY_DIR}
             gen_output_po ${output_po}.gen)
         foreach(locale_po ${locale_pos})
-            string(REPLACE ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}
+            string(REPLACE ${PROJECT_SOURCE_DIR} ${PROJECT_BINARY_DIR}
                 gen_locale_po ${locale_po}.gen)
             list(APPEND gen_locale_pos ${gen_locale_po})
         endforeach()
@@ -233,7 +233,7 @@ if(ENABLE_GUI OR ENABLE_CLI)
             VERBATIM)
 
         foreach(locale_po ${locale_pos})
-            string(REPLACE ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}
+            string(REPLACE ${PROJECT_SOURCE_DIR} ${PROJECT_BINARY_DIR}
                 gen_locale_po ${locale_po}.gen)
 
             get_filename_component(locale_name ${locale_po} NAME_WE)
@@ -304,7 +304,7 @@ if(ENABLE_GUI)
             OUTPUT_NAME SolveSpace
             XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME "YES"
             XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.solvespace"
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+            RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
     elseif(EMSCRIPTEN)
         # Due to the response file hack below, we need a version of Emscripten that
         # passes arguments via a response file to the `file_packager` utility, but
@@ -329,7 +329,7 @@ if(ENABLE_GUI)
         foreach(resource ${resource_list})
             # Strip everything before `res/...`, and map the source path to the stripped
             # path in the virtual Emscripten fileystem
-            file(RELATIVE_PATH target_path "${CMAKE_SOURCE_DIR}" "${resource}")
+            file(RELATIVE_PATH target_path "${PROJECT_SOURCE_DIR}" "${resource}")
             list(APPEND RESP_LINK_FLAGS "--preload-file \"${resource}\"@\"${target_path}\"")
         endforeach()
 
@@ -500,7 +500,7 @@ if(APPLE)
     set(LIBOMP_LINK_PATH_UTILS "@executable_path/SolveSpace.app/Contents/Resources/libomp.dylib")
     if(ENABLE_GUI)
         add_custom_command(TARGET solvespace POST_BUILD
-            COMMAND cp -r ${CMAKE_BINARY_DIR}/Resources $<TARGET_BUNDLE_CONTENT_DIR:solvespace>
+            COMMAND cp -r ${PROJECT_BINARY_DIR}/Resources $<TARGET_BUNDLE_CONTENT_DIR:solvespace>
         )
         if(ENABLE_OPENMP)
             execute_process(COMMAND install_name_tool -id ${LIBOMP_LINK_PATH} ${LIBOMP_LIB_PATH})

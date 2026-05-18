@@ -11,16 +11,16 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH
-    "${CMAKE_SOURCE_DIR}/cmake/")
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 
 # for /MT on MSVC
 set(CMAKE_USER_MAKE_RULES_OVERRIDE
-   "${CMAKE_SOURCE_DIR}/cmake/c_flag_overrides.cmake")
+   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/c_flag_overrides.cmake")
 set(CMAKE_USER_MAKE_RULES_OVERRIDE_CXX
-   "${CMAKE_SOURCE_DIR}/cmake/cxx_flag_overrides.cmake")
+   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cxx_flag_overrides.cmake")
 
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
@@ -78,10 +78,10 @@ option(FORCE_VENDORED_Eigen3
 
 set(OPENGL 3 CACHE STRING "OpenGL version to use (one of: 1 3)")
 
-set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
-set(LIBRARY_OUTPUT_PATH    ${CMAKE_BINARY_DIR}/bin)
+set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_BINARY_DIR}/bin)
+set(LIBRARY_OUTPUT_PATH    ${CMAKE_CURRENT_BINARY_DIR}/bin)
 if("${CMAKE_GENERATOR}" STREQUAL "Xcode")
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY $<1:${CMAKE_BINARY_DIR}/bin>)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_BINARY_DIR}/bin>)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -234,7 +234,7 @@ if(EMSCRIPTEN)
     set(MI_EXTRA_CPPDEFS "emmalloc_free=free;emmalloc_memalign=memalign" CACHE INTERNAL "")
 endif()
 add_subdirectory(extlib/mimalloc EXCLUDE_FROM_ALL)
-set(MIMALLOC_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/extlib/mimalloc/include)
+set(MIMALLOC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extlib/mimalloc/include)
 
 if(NOT FORCE_VENDORED_Eigen3)
     find_package(Eigen3 CONFIG)
@@ -242,7 +242,7 @@ endif()
 if(FORCE_VENDORED_Eigen3 OR NOT EIGEN3_INCLUDE_DIRS)
     message(STATUS "Using in-tree Eigen")
     set(EIGEN3_FOUND             YES)
-    set(EIGEN3_INCLUDE_DIRS      ${CMAKE_SOURCE_DIR}/extlib/eigen)
+    set(EIGEN3_INCLUDE_DIRS      ${CMAKE_CURRENT_SOURCE_DIR}/extlib/eigen)
 else()
     message(STATUS "Using system Eigen: ${EIGEN3_INCLUDE_DIRS}")
 endif()
@@ -276,12 +276,12 @@ if(ENABLE_GUI OR ENABLE_CLI)
         # ugly hack will have to stay until both libraries release fixed versions.
         add_vendored_subdirectory(extlib/zlib)
         set(ZLIB_LIBRARY      zlibstatic CACHE INTERNAL "")
-        set(ZLIB_INCLUDE_DIR  ${CMAKE_SOURCE_DIR}/extlib/zlib CACHE INTERNAL "")
+        set(ZLIB_INCLUDE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/extlib/zlib CACHE INTERNAL "")
         add_library(ZLIB::ZLIB ALIAS ${ZLIB_LIBRARY})
         find_package(ZLIB REQUIRED)
         set(ZLIB_FOUND        ${ZLIB_FOUND} CACHE INTERNAL "")
 
-        list(APPEND ZLIB_INCLUDE_DIR ${CMAKE_BINARY_DIR}/extlib/zlib)
+        list(APPEND ZLIB_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/extlib/zlib)
 
         # There's an issue with the zlib configuration, which doesn't provide a way to
         # disable the shared or static library builds, and on UNIX sets the base name of
@@ -306,8 +306,8 @@ if(ENABLE_GUI OR ENABLE_CLI)
             PNG_TOOLS               OFF
             PNG_TESTS               OFF
             PNG_FRAMEWORK           OFF
-            PNG_PNG_INCLUDE_DIR     ${CMAKE_SOURCE_DIR}/extlib/libpng)
-        list(APPEND PNG_PNG_INCLUDE_DIR ${CMAKE_BINARY_DIR}/extlib/libpng)
+            PNG_PNG_INCLUDE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/extlib/libpng)
+        list(APPEND PNG_PNG_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/extlib/libpng)
 
         find_vendored_package(Freetype freetype
             FT_DISABLE_BZIP2        ON
@@ -315,7 +315,7 @@ if(ENABLE_GUI OR ENABLE_CLI)
             FT_DISABLE_BROTLI       ON
             FT_DISABLE_PNG          ON
             FREETYPE_LIBRARY        freetype
-            FREETYPE_INCLUDE_DIRS   ${CMAKE_SOURCE_DIR}/extlib/freetype/include)
+            FREETYPE_INCLUDE_DIRS   ${CMAKE_CURRENT_SOURCE_DIR}/extlib/freetype/include)
 
         message(STATUS "Using in-tree pixman")
         set(PIXMAN_FOUND            YES)
@@ -323,16 +323,16 @@ if(ENABLE_GUI OR ENABLE_CLI)
         set(PIXMAN_BUILD_TESTS      OFF CACHE BOOL "")
         set(PIXMAN_BUILD_DEMOS      OFF CACHE BOOL "")
 
-        set(PIXMAN_INCLUDE_DIRS     ${CMAKE_SOURCE_DIR}/extlib/pixman/pixman)
-        list(APPEND PIXMAN_INCLUDE_DIRS ${CMAKE_BINARY_DIR}/extlib/pixman/pixman)
+        set(PIXMAN_INCLUDE_DIRS     ${CMAKE_CURRENT_SOURCE_DIR}/extlib/pixman/pixman)
+        list(APPEND PIXMAN_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/extlib/pixman/pixman)
         add_vendored_subdirectory(extlib/pixman)
 
         message(STATUS "Using in-tree cairo")
         add_vendored_subdirectory(extlib/cairo)
         set(CAIRO_FOUND             YES)
         set(CAIRO_LIBRARIES         cairo)
-        set(CAIRO_INCLUDE_DIRS      ${CMAKE_SOURCE_DIR}/extlib/cairo/src)
-        list(APPEND CAIRO_INCLUDE_DIRS ${CMAKE_BINARY_DIR}/extlib/cairo/src)
+        set(CAIRO_INCLUDE_DIRS      ${CMAKE_CURRENT_SOURCE_DIR}/extlib/cairo/src)
+        list(APPEND CAIRO_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/extlib/cairo/src)
     else()
         # On Linux and BSDs we're a good citizen and link to system libraries.
         find_package(Backtrace)
@@ -361,7 +361,7 @@ if(ENABLE_GUI)
             set(ANGLE_ENABLE_HLSL       ON  CACHE INTERNAL "")
             add_vendored_subdirectory(extlib/angle)
             set(OPENGL_LIBRARIES        EGL GLESv2)
-            set(OPENGL_INCLUDE_DIR      ${CMAKE_SOURCE_DIR}/extlib/angle/include)
+            set(OPENGL_INCLUDE_DIR      ${CMAKE_CURRENT_SOURCE_DIR}/extlib/angle/include)
         else()
             find_package(OpenGL REQUIRED)
         endif()
@@ -370,9 +370,9 @@ if(ENABLE_GUI)
             message(STATUS "Using prebuilt SpaceWare")
             set(SPACEWARE_FOUND TRUE)
             set(SPACEWARE_INCLUDE_DIR
-                "${CMAKE_SOURCE_DIR}/extlib/si")
+                "${CMAKE_CURRENT_SOURCE_DIR}/extlib/si")
             set(SPACEWARE_LIBRARIES
-                "${CMAKE_SOURCE_DIR}/extlib/si/siapp.lib")
+                "${CMAKE_CURRENT_SOURCE_DIR}/extlib/si/siapp.lib")
         endif()
     elseif(APPLE)
         find_package(OpenGL REQUIRED)

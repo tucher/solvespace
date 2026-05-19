@@ -961,27 +961,21 @@ Slvs_SolveResult Slvs_SolveSketch(uint32_t shg, Slvs_hConstraint **bad = nullptr
     }
     sr.result = 0;
     switch(status) {
-        case SolveResult::OKAY: {
-            sr.result = SLVS_RESULT_OKAY;
-            return sr;
-        }
-        case SolveResult::DIDNT_CONVERGE: {
-            sr.result = SLVS_RESULT_DIDNT_CONVERGE;
-            return sr;
-        }
-        case SolveResult::REDUNDANT_DIDNT_CONVERGE: {
-            sr.result = SLVS_RESULT_INCONSISTENT;
-            return sr;
-        }
-        case SolveResult::REDUNDANT_OKAY: {
-            sr.result = SLVS_RESULT_REDUNDANT_OKAY;
-            return sr;
-        }
-        case SolveResult::TOO_MANY_UNKNOWNS: {
-            sr.result = SLVS_RESULT_TOO_MANY_UNKNOWNS;
-            return sr;
-        }
+        case SolveResult::OKAY:                    sr.result = SLVS_RESULT_OKAY; break;
+        case SolveResult::DIDNT_CONVERGE:          sr.result = SLVS_RESULT_DIDNT_CONVERGE; break;
+        case SolveResult::REDUNDANT_DIDNT_CONVERGE: sr.result = SLVS_RESULT_INCONSISTENT; break;
+        case SolveResult::REDUNDANT_OKAY:          sr.result = SLVS_RESULT_REDUNDANT_OKAY; break;
+        case SolveResult::TOO_MANY_UNKNOWNS:       sr.result = SLVS_RESULT_TOO_MANY_UNKNOWNS; break;
     }
+    // Release the per-solve scratch heap. `System::Solve` allocates
+    // Expr trees + Jacobian intermediates into the thread-local
+    // `TempArena` mimalloc heap (see platform/platformbase.cpp).
+    // Without this call the arena grows by ~hundreds of KB per
+    // solve — invisible in test runs that only call once, but a
+    // gigabyte-per-minute leak in a real-time tick loop. The legacy
+    // one-shot `Slvs_SolveSketch3D` (below) already does this; the
+    // incremental `Slvs_SolveSketch` had been missing it.
+    Platform::FreeAllTemporary();
     return sr;
 }
 

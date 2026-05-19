@@ -14,16 +14,31 @@ if(ENABLE_PYTHON_LIB)
         DEPENDS lib.pyx
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
-    find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
-    Python_add_library(slvs-py MODULE cylib.c)
+    # Cross-compile opt-in. When SLVS_PY_PYTHON_INCLUDE_DIR /
+    # SLVS_PY_PYTHON_LIBRARY are pre-populated by the caller's
+    # toolchain file, skip find_package(Python) (which insists on a
+    # runnable Interpreter matching the *target* ABI — fatal in a
+    # MinGW-w64-on-Linux cross-build for a Windows-ABI module).
+    # The caller pre-supplies the header + import-lib paths, and we
+    # build slvs-py as a plain MODULE library.
+    if(DEFINED SLVS_PY_PYTHON_INCLUDE_DIR AND DEFINED SLVS_PY_PYTHON_LIBRARY)
+        add_library(slvs-py MODULE cylib.c)
+        target_include_directories(slvs-py PRIVATE ${SLVS_PY_PYTHON_INCLUDE_DIR})
+        target_link_libraries(slvs-py PRIVATE slvs-interface ${SLVS_PY_PYTHON_LIBRARY})
+        # `.pyd` on Windows, no `lib` prefix on either platform.
+        if(WIN32)
+            set_target_properties(slvs-py PROPERTIES PREFIX "" SUFFIX ".pyd")
+        else()
+            set_target_properties(slvs-py PROPERTIES PREFIX "")
+        endif()
+    else()
+        find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
+        Python_add_library(slvs-py MODULE cylib.c)
+        target_link_libraries(slvs-py PRIVATE Python::Module)
+    endif()
     set_target_properties(slvs-py PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_definitions(slvs-py PRIVATE -DSTATIC_LIB)
-    target_link_libraries(
-        slvs-py
-    PRIVATE
-        slvs-interface
-        Python::Module
-    )
+    target_link_libraries(slvs-py PRIVATE slvs-interface)
     set_target_properties(slvs-py PROPERTIES LIBRARY_OUTPUT_NAME solvespace)
     # Where to install the slvs-py module + its Python shim files.
     # Honour an external `SLVS_PY_DESTINATION` override first — used

@@ -4,7 +4,9 @@
 #include <mimalloc.h>
 
 #if defined(WIN32)
-#   include <Windows.h>
+// Lowercase form so case-sensitive cross-builds (MinGW-w64 on Linux)
+// find it; MSVC/Windows is case-insensitive and accepts both.
+#   include <windows.h>
 #endif // defined(WIN32)
 
 #include "util.h"

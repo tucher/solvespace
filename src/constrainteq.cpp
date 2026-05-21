@@ -271,7 +271,14 @@ void ConstraintBase::GenerateEquations(IdList<Equation,hEquation> *l,
                                        bool forReference) const {
     if(reference && !forReference) return;
 
-    Expr *exA = Expr::From(valA);
+    // Indirect via Op::CONST_PTR so the cached Jacobian survives
+    // `Slvs_SetConstraintValue`: the constraint's storage at &valA is
+    // stable for the constraint's lifetime, and the cached Expr tree
+    // reads the live value on every Eval. The classical
+    // `Expr::From(valA)` would have baked the at-Generate-time value
+    // into a CONSTANT node and the cache would go stale on the next
+    // tick where the caller bumps the actuator target.
+    Expr *exA = Expr::FromPtr(&valA);
     switch(type) {
         case Type::PT_PT_DISTANCE:
             AddEq(l, Distance(*this->sk, workplane, ptA, ptB)->Minus(exA), 0);

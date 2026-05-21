@@ -158,6 +158,15 @@ public:
     // warm-start or a near-singular Jacobian.
     int last_newton_iterations = 0;
 
+    // True when `mat.A.sym` + `mat.B.sym` + the supporting `mat.param`
+    // / `mat.eq` / `paramToIndex` were left populated by a previous
+    // solve and remain valid for the current one. Reset by every
+    // mutating Slvs_* entry point (via `Solver::InvalidateJacobianCache`).
+    // The cached Expr trees live in the per-Solver persistent heap
+    // (see `Solver::persistent_heap`), so they survive the per-solve
+    // `FreeAllTemporary`.
+    bool jacobian_cache_valid = false;
+
     // Persistent storage for the normal-equations matrix
     // `AAt = mat.A.num * mat.A.num.transpose()` that `SolveLeastSquares`
     // hands to `SolveLinearSystem`. Held on the System (not as a
@@ -469,36 +478,22 @@ public:
     // copy so subsequent in-method `this->sk->…` lookups find this
     // sketch. Equivalent to `entity.AddAndAssignId(e)` followed by
     // pointing the inserted element's `sk` here.
-    hEntity     AddEntity(ENTITY *e) {
-        hEntity h = entity.AddAndAssignId(e);
-        entity.FindById(h)->sk = this;
-        return h;
-    }
-    hConstraint AddConstraint(CONSTRAINT *c) {
-        hConstraint h = constraint.AddAndAssignId(c);
-        constraint.FindById(h)->sk = this;
-        return h;
-    }
-    hParam      AddParam(Param *p) {
-        hParam h = param.AddAndAssignId(p);
-        param.FindById(h)->sk = this;
-        return h;
-    }
+    //
+    // Every insertion also invalidates the owning Solver's symbolic
+    // Jacobian cache (Phase 2) — adding an entity/constraint/param
+    // changes the topology that `WriteJacobian` materialises, so any
+    // cached `mat.A.sym` is now stale. Defined out-of-line in
+    // system.cpp so this header doesn't have to know about
+    // `Solver::InvalidateJacobianCache`.
+    hEntity     AddEntity(ENTITY *e);
+    hConstraint AddConstraint(CONSTRAINT *c);
+    hParam      AddParam(Param *p);
     // `Add` variants (handle pre-assigned). Used by `Slvs_Solve` which
     // takes a caller-built param/entity/constraint stream with handles
     // already set; the IdList just stores them in handle-order.
-    void        AddEntityKeepingHandle(ENTITY *e) {
-        entity.Add(e);
-        entity.FindById(e->h)->sk = this;
-    }
-    void        AddConstraintKeepingHandle(CONSTRAINT *c) {
-        constraint.Add(c);
-        constraint.FindById(c->h)->sk = this;
-    }
-    void        AddParamKeepingHandle(Param *p) {
-        param.Add(p);
-        param.FindById(p->h)->sk = this;
-    }
+    void        AddEntityKeepingHandle(ENTITY *e);
+    void        AddConstraintKeepingHandle(CONSTRAINT *c);
+    void        AddParamKeepingHandle(Param *p);
 
     void Clear();
 

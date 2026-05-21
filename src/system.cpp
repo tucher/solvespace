@@ -19,6 +19,78 @@ const double System::CONVERGE_TOLERANCE = (LENGTH_EPS/(1e2));
 
 constexpr size_t LikelyPartialCountPerEq = 10;
 
+// ── Sketch insertion helpers ────────────────────────────────────────
+//
+// Defined out-of-line because they call `Solver::InvalidateJacobianCache`,
+// whose declaration arrives after Sketch in the header include order.
+// Every topology insertion drops the cached symbolic Jacobian — the
+// new entity/constraint/param could appear in equations the cached
+// `mat.A.sym` doesn't reflect.
+
+#define INVALIDATE_CACHE_IF_OWNED() do { \
+    if(this->owner != nullptr) this->owner->InvalidateJacobianCache(); \
+} while(0)
+
+hEntity Sketch::AddEntity(EntityBase *e) {
+    INVALIDATE_CACHE_IF_OWNED();
+    hEntity h = entity.AddAndAssignId(e);
+    entity.FindById(h)->sk = this;
+    return h;
+}
+hConstraint Sketch::AddConstraint(ConstraintBase *c) {
+    INVALIDATE_CACHE_IF_OWNED();
+    hConstraint h = constraint.AddAndAssignId(c);
+    constraint.FindById(h)->sk = this;
+    return h;
+}
+hParam Sketch::AddParam(Param *p) {
+    INVALIDATE_CACHE_IF_OWNED();
+    hParam h = param.AddAndAssignId(p);
+    param.FindById(h)->sk = this;
+    return h;
+}
+void Sketch::AddEntityKeepingHandle(EntityBase *e) {
+    INVALIDATE_CACHE_IF_OWNED();
+    entity.Add(e);
+    entity.FindById(e->h)->sk = this;
+}
+void Sketch::AddConstraintKeepingHandle(ConstraintBase *c) {
+    INVALIDATE_CACHE_IF_OWNED();
+    constraint.Add(c);
+    constraint.FindById(c->h)->sk = this;
+}
+void Sketch::AddParamKeepingHandle(Param *p) {
+    INVALIDATE_CACHE_IF_OWNED();
+    param.Add(p);
+    param.FindById(p->h)->sk = this;
+}
+
+#undef INVALIDATE_CACHE_IF_OWNED
+
+// Walk `mat.A.sym` and `mat.B.sym` and deep-copy every Expr tree into
+// `solver->persistent_heap`, replacing the pointers in-place. After
+// this call, none of the cached Exprs reference the per-solve
+// TempArena that `Slvs_SolveSketch` is about to free; the cache
+// survives across solves until invalidated.
+//
+// Caller invariant: `mat.A.sym` and `mat.B.sym` were just populated
+// by `WriteJacobian`. The Exprs are still in the temp arena at
+// promotion time (DeepCopyIntoHeap reads them); we replace each
+// pointer with the persistent copy.
+static void PromoteJacobianToPersistent(System *sys) {
+    mi_heap_t *heap = sys->owner->EnsurePersistentHeap();
+    using namespace Eigen;
+    const int outer = sys->mat.A.sym.outerSize();
+    for(int k = 0; k < outer; k++) {
+        for(SparseMatrix<Expr *>::InnerIterator it(sys->mat.A.sym, k); it; ++it) {
+            it.valueRef() = it.value()->DeepCopyIntoHeap(heap);
+        }
+    }
+    for(size_t i = 0; i < sys->mat.B.sym.size(); i++) {
+        sys->mat.B.sym[i] = sys->mat.B.sym[i]->DeepCopyIntoHeap(heap);
+    }
+}
+
 bool System::WriteJacobian(int tag) {
     // Clear all
     mat.param.clear();
@@ -258,46 +330,27 @@ bool System::TestRank(int *dof, int *rank) {
     return jacobianRank == mat.m;
 }
 
-// pImpl for the analyzePattern cache. One SparseQR instance per
-// `System`; we call `analyzePattern` on the first solve of a given
-// matrix-pattern epoch and `factorize` only on subsequent ones.
-//
-// Why this is sound: Eigen's `analyzePattern` consumes only the
-// sparsity pattern (row/col positions of non-zeros) of the matrix,
-// not its numeric values. Within a single `System::NewtonSolve` call
-// the pattern of `AAt = mat.A.num * mat.A.num.transpose()` is fixed
-// — the Jacobian's structure is determined by which equations and
-// parameters carry the current iteration's tag, not by their values.
-// Newton iterations change values; they don't add/remove rows or
-// columns. So one analyzePattern at the start of a NewtonSolve
-// covers every subsequent iteration in the same call.
-//
-// Invalidation: `analyzePattern_done` is reset to `false` at the
-// entry of every `NewtonSolve` (since the tagged subset changes
-// between the "alone" early-out and the big-system pass). The
-// cache object itself persists for the System lifetime; we just
-// re-analyze when needed. This is Phase 1.3 of the performance plan
-// — Phase 2 (Project A) extends this to a tape-level cache that
-// survives across solves.
-struct System::LinearSolverCache {
-    Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>> qr;
-    bool analyzePattern_done = false;
-};
+// pImpl placeholder — kept as a struct so the explicit `~System()`
+// in `solvespace.h` still references a complete type. Phase 1.3's
+// SparseQR analyzePattern cache lived here and was removed because
+// Eigen's `SparseQR::analyzePattern` retains references into the
+// analyzed matrix's index/value arrays, but `AAt = mat.A.num * ...`
+// reallocates those arrays on every Newton iteration. The pattern
+// cache dangled and crashed intermittently in
+// test_slvs_incremental_delta (the test that exercises the rank-
+// test path that Phase 1.2 lets the engine opt out of). The ~2%
+// gain wasn't worth the soundness hazard; the bigger Phase 2
+// symbolic-Jacobian cache (this file's `jacobian_cache_valid`
+// path) doesn't depend on it.
+struct System::LinearSolverCache {};
 
 bool System::SolveLinearSystem(const Eigen::SparseMatrix <double> &A,
                                const Eigen::VectorXd &B, Eigen::VectorXd *X)
 {
     if(A.outerSize() == 0) return true;
     using namespace Eigen;
-    if(linear_solver_cache == nullptr) {
-        linear_solver_cache = new LinearSolverCache();
-    }
-    auto &solver = linear_solver_cache->qr;
-    if(!linear_solver_cache->analyzePattern_done) {
-        solver.analyzePattern(A);
-        linear_solver_cache->analyzePattern_done = true;
-    }
-    solver.factorize(A);
+    SparseQR<SparseMatrix<double>, COLAMDOrdering<int>> solver;
+    solver.compute(A);
     *X = solver.solve(B);
     return (solver.info() == Success);
 }
@@ -342,17 +395,6 @@ bool System::SolveLeastSquares() {
 }
 
 bool System::NewtonSolve() {
-    // The tagged subset of equations / parameters changes between
-    // calls to NewtonSolve (System::Solve walks "alone" equations
-    // first, then the big leftover system) — each NewtonSolve runs
-    // on a different submatrix pattern. Invalidate the SparseQR
-    // pattern cache so the first SolveLinearSystem call this round
-    // re-analyzes; subsequent iterations within this NewtonSolve
-    // reuse it.
-    if(linear_solver_cache != nullptr) {
-        linear_solver_cache->analyzePattern_done = false;
-    }
-
     int iter = 0;
     bool converged = false;
     int i;
@@ -488,9 +530,62 @@ void System::FindWhichToRemoveToFixJacobian(Group *g, List<hConstraint> *bad, bo
 SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
                           bool andFindBad, bool andFindFree, bool forceDofCheck)
 {
-    WriteEquationsExceptFor(Constraint::NO_CONSTRAINT, g);
-
+    // Hoisted so the early `goto didnt_converge`s in both branches
+    // don't jump across a local's initialisation (ill-formed for any
+    // non-trivially-initialised local — `SubstitutionMap` is a
+    // `std::unordered_map` with a non-trivial default ctor).
+    bool can_cache = false;
     bool rankOk;
+    SubstitutionMap subMap;
+    // ── Phase 2 cache-hit fast path ─────────────────────────────────
+    //
+    // When `jacobian_cache_valid` is set by a previous successful
+    // solve, `mat.A.sym` and `mat.B.sym` are still populated with the
+    // symbolic Jacobian and residuals — their Expr trees live in the
+    // per-Solver persistent heap and reference PARAM_PTRs into
+    // `param` (whose storage we kept stable) and CONST_PTRs into
+    // `ConstraintBase::valA` (also stable for the constraint's
+    // lifetime). Slvs_SolveSketch refreshed `param[i].val` from the
+    // sketch before calling us; we skip everything up to NewtonSolve.
+    //
+    // Caller invariants enforced upstream (slvs/lib.cpp):
+    //   - No mutating Slvs_* call has fired since the last solve.
+    //   - `dragged` was re-applied.
+    //   - `param[i].val` was refreshed from `sk->param[i].val`.
+    //
+    // If any of those is wrong the cache should already have been
+    // invalidated by `Solver::InvalidateJacobianCache`.
+    if(jacobian_cache_valid) {
+        if(dof != NULL) *dof = -1;
+        if(!NewtonSolve()) {
+            // Don't drop the cache — the topology hasn't changed; the
+            // user can adjust inputs and try again. didnt_converge
+            // is handled by the same diagnostic path as the slow path.
+            rankOk = true;
+            goto didnt_converge;
+        }
+        rankOk = (!g->suppressDofCalculation) ? TestRank(dof) : true;
+        if(!rankOk) {
+            if(andFindBad) {
+                // FindWhichToRemoveToFixJacobian rebuilds mat from
+                // scratch — invalidate so the next solve starts fresh.
+                owner->InvalidateJacobianCache();
+                FindWhichToRemoveToFixJacobian(g, bad, forceDofCheck);
+            }
+        } else {
+            MarkParamsFree(andFindFree);
+        }
+        for(auto &p : param) {
+            Param *pp = owner->sk->GetParam(p.h);
+            pp->val   = p.val;
+            pp->known = true;
+            pp->free  = p.free;
+        }
+        return rankOk ? SolveResult::OKAY : SolveResult::REDUNDANT_OKAY;
+    }
+    // ── Slow path: build mat from scratch ──────────────────────────
+
+    WriteEquationsExceptFor(Constraint::NO_CONSTRAINT, g);
 
     // int x;
     // printf("%d equations", eq.n);
@@ -506,8 +601,6 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
     param.ClearTags();
     eq.ClearTags();
 
-    SubstitutionMap subMap;
-
     // Since we are suppressing dof calculation or allowing redundant, we
     // can't / don't want to catch result of dof checking without substitution
     if(g->suppressDofCalculation || g->allowRedundant || !forceDofCheck) {
@@ -518,7 +611,8 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
     // are soluble alone. This can be a huge speedup. We don't know whether
     // the system is consistent yet, but if it isn't then we'll catch that
     // later.
-    int alone = 1;
+    int alone;
+    alone = 1;
     for(auto &e : eq) {
         if(e.tag != 0)
             continue;
@@ -548,6 +642,19 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
     if(!WriteJacobian(0)) {
         return SolveResult::TOO_MANY_UNKNOWNS;
     }
+    // Promote mat.A.sym + mat.B.sym Expr trees from the per-solve
+    // temp arena into the persistent per-Solver heap. This is the
+    // sole copy on the slow path; subsequent solves enter via the
+    // cache-hit branch at the top. Caching is suppressed if the
+    // alone-loop fired (alone > 1): the cached mat only covers the
+    // tag-0 big-system subset, and re-running the alone loop on the
+    // next tick could pick different tag assignments and silently
+    // produce wrong results. The current pyactiongraphsim workload
+    // produces 0 alone equations (verified by SLVS_TRACE_ALONE).
+    can_cache = (alone == 1);
+    if(can_cache) {
+        PromoteJacobianToPersistent(this);
+    }
     // Clear dof value in order to have indication when dof is actually not calculated
     if(dof != NULL) *dof = -1;
     // We are suppressing or allowing redundant, so we no need to catch unsolveable + redundant
@@ -576,6 +683,12 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
         pp->known = true;
         pp->free  = p.free;
     }
+    // Cache is valid for the NEXT solve only if every cache invariant
+    // we set up still holds and no helper down the line rebuilt mat.
+    // `FindWhichToRemoveToFixJacobian` (called for !rankOk + andFindBad
+    // above) rewrites mat to its own ad-hoc form, so don't cache in
+    // that case — it invalidated already.
+    jacobian_cache_valid = can_cache && rankOk;
     return rankOk ? SolveResult::OKAY : SolveResult::REDUNDANT_OKAY;
 
 didnt_converge:

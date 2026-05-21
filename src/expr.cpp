@@ -8,10 +8,20 @@
 //-----------------------------------------------------------------------------
 #include "solvespace.h"
 
+#include <mimalloc.h>
+
 namespace SolveSpace {
 
 static inline Expr *AllocExpr() {
     return (Expr *)Platform::AllocTemporary(sizeof(Expr));
+}
+
+// Used by `DeepCopyIntoHeap` to allocate every node of the copied tree
+// directly from a caller-supplied heap (the Solver's persistent heap,
+// in practice). Doesn't touch the thread-local `TempArena`, so the
+// resulting tree survives `FreeAllTemporary`.
+static inline Expr *AllocExprIn(mi_heap_t *heap) {
+    return (Expr *)mi_heap_zalloc(heap, sizeof(Expr));
 }
 
 ExprVector ExprVector::From(Expr *x, Expr *y, Expr *z) {
@@ -224,6 +234,13 @@ Expr *Expr::From(hParam p) {
     return r;
 }
 
+Expr *Expr::FromPtr(const double *ptr) {
+    Expr *r = AllocExpr();
+    r->op = Op::CONST_PTR;
+    r->const_ptr = ptr;
+    return r;
+}
+
 Expr *Expr::From(double v) {
     // Statically allocate common constants.
     // Note: this is only valid because AllocExpr() uses AllocTemporary(),
@@ -273,6 +290,7 @@ int Expr::Children() const {
         case Op::PARAM:
         case Op::PARAM_PTR:
         case Op::CONSTANT:
+        case Op::CONST_PTR:
         case Op::VARIABLE:
             return 0;
 
@@ -309,6 +327,15 @@ Expr *Expr::DeepCopy() const {
     int c = n->Children();
     if(c > 0) n->a = a->DeepCopy();
     if(c > 1) n->b = b->DeepCopy();
+    return n;
+}
+
+Expr *Expr::DeepCopyIntoHeap(mi_heap_t *heap) const {
+    Expr *n = AllocExprIn(heap);
+    *n = *this;
+    int c = n->Children();
+    if(c > 0) n->a = a->DeepCopyIntoHeap(heap);
+    if(c > 1) n->b = b->DeepCopyIntoHeap(heap);
     return n;
 }
 
@@ -358,6 +385,7 @@ double Expr::Eval(const Sketch *sk) const {
         case Op::PARAM_PTR:     return parp->val;
 
         case Op::CONSTANT:      return v;
+        case Op::CONST_PTR:     return *const_ptr;
         case Op::VARIABLE:      ssassert(false, "Not supported yet");
 
         case Op::PLUS:          return a->Eval(sk) + b->Eval(sk);
@@ -384,6 +412,7 @@ Expr *Expr::PartialWrt(hParam p) const {
         case Op::PARAM:     return From(p == parh ? 1 : 0);
 
         case Op::CONSTANT:  return From(0.0);
+        case Op::CONST_PTR: return From(0.0);  // constant w.r.t. solver params
         case Op::VARIABLE:  ssassert(false, "Not supported yet");
 
         case Op::PLUS:      return (a->PartialWrt(p))->Plus(b->PartialWrt(p));
@@ -466,6 +495,7 @@ Expr *Expr::FoldConstants(bool allocCopy, size_t depth) {
         case Op::PARAM_PTR:
         case Op::PARAM:
         case Op::CONSTANT:
+        case Op::CONST_PTR:
         case Op::VARIABLE:
             break;
 
@@ -597,6 +627,7 @@ std::string Expr::Print() const {
         case Op::PARAM_PTR: return ssprintf("param(p%08x)", parp->h.v);
 
         case Op::CONSTANT:  return ssprintf("%.3f", v);
+        case Op::CONST_PTR: return ssprintf("*%p(%.3f)", (void *)const_ptr, *const_ptr);
         case Op::VARIABLE:  return "(var)";
 
         case Op::PLUS:      c = '+'; goto p;

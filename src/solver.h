@@ -31,6 +31,10 @@
 #include "handle.h"
 #include "param.h"
 
+// Forward-declared so this header doesn't pull in <mimalloc.h>.
+struct mi_heap_s;
+typedef struct mi_heap_s mi_heap_t;
+
 namespace SolveSpace {
 
 class Sketch;
@@ -56,6 +60,23 @@ public:
     // to `true` after `engine.build()`. Default false for callers
     // that need the diagnostic.
     bool      suppress_rank_test = false;
+
+    // Persistent scratch arena for Expr nodes that must survive across
+    // `Slvs_SolveSketch` calls — the symbolic Jacobian cache (Phase 2)
+    // holds `Expr *` pointers in `System::mat.A.sym` / `mat.B.sym`
+    // that the per-solve temp arena would otherwise free at the end
+    // of each solve. Lazy-allocated on first use (see
+    // `Solver::EnsurePersistentHeap`); destroyed and recreated by
+    // `Solver::InvalidateJacobianCache` and in `~Solver`.
+    mi_heap_t *persistent_heap = nullptr;
+
+    // Returns the persistent heap, allocating it on first call.
+    mi_heap_t *EnsurePersistentHeap();
+    // Wipes the persistent heap, destroying every cached Expr in one
+    // pass. Sets `system->jacobian_cache_valid = false`. Called from
+    // every mutating Slvs_* entry point that could change the symbolic
+    // structure (see slvs/lib.cpp).
+    void InvalidateJacobianCache();
 
     Solver();
     ~Solver();

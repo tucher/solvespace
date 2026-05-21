@@ -72,6 +72,13 @@ struct NewtonStats {
 };
 static NewtonStats g_newton_stats;
 
+// Jacobian-cache hit/miss counters — printed alongside the Newton
+// histogram when SLVS_NEWTON_STATS is set. The hit rate is the
+// headline number for Phase 2: at steady state it should approach
+// (N-1)/N for an N-tick run after a single warm-up miss.
+static std::atomic<uint64_t> g_jac_cache_hits{0};
+static std::atomic<uint64_t> g_jac_cache_misses{0};
+
 static void Slvs_PrintNewtonStats() {
     if(!g_newton_stats.enabled) return;
     uint64_t total = g_newton_stats.total_solves.load();
@@ -80,6 +87,13 @@ static void Slvs_PrintNewtonStats() {
     fprintf(stderr, "total solves: %llu (failed: %llu)\n",
             (unsigned long long)total,
             (unsigned long long)g_newton_stats.failed_solves.load());
+    uint64_t hits = g_jac_cache_hits.load();
+    uint64_t misses = g_jac_cache_misses.load();
+    if(hits + misses > 0) {
+        fprintf(stderr, "Jacobian cache: %llu hits, %llu misses (%.1f%% hit rate)\n",
+                (unsigned long long)hits, (unsigned long long)misses,
+                100.0 * hits / static_cast<double>(hits + misses));
+    }
     uint64_t cum = 0;
     int modal_bucket = 0;
     uint64_t modal_count = 0;
@@ -976,6 +990,11 @@ void Slvs_MakeQuaternion(double ux, double uy, double uz,
 void Slvs_ClearSketch(Slvs_Solver *solver)
 {
     SolveSpace::Solver *solver_cpp = as_solver(solver);
+    // Wiping the sketch nukes the symbolic Jacobian cache too —
+    // every cached Expr* points into structures we're about to
+    // erase. (Drops the persistent heap in one shot; the next solve
+    // rebuilds from scratch and re-caches.)
+    solver_cpp->InvalidateJacobianCache();
     // Former globals — now per-Solver fields. See solver.h.
     solver_cpp->dragged->clear();
     solver_cpp->sys->Clear();
@@ -1001,7 +1020,6 @@ void Slvs_MarkDragged(Slvs_Solver *solver, Slvs_Entity ptA) {
 Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t shg, Slvs_hConstraint **bad = nullptr)
 {
     SolveSpace::Solver *solver_cpp = as_solver(solver);
-    solver_cpp->sys->Clear();
 
     Group g = {};
     g.h.v = shg;
@@ -1009,65 +1027,90 @@ Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t shg, Slvs_hConst
     // when the caller has opted in. See `Slvs_SetSuppressRankTest`.
     g.suppressDofCalculation = solver_cpp->suppress_rank_test;
 
-    // add params from entities on sketch
-    for(EntityBase &ent : solver_cpp->sk->entity) {
-        EntityBase *e = &ent;
-        // skip entities from other groups
-        if (e->group.v != shg) {
-            continue;
+    const bool cache_hit = solver_cpp->sys->jacobian_cache_valid;
+    (cache_hit ? g_jac_cache_hits : g_jac_cache_misses)
+        .fetch_add(1, std::memory_order_relaxed);
+    if(cache_hit) {
+        // ── Phase 2 cache-hit fast path ────────────────────────────
+        // Don't Clear() sys — that would wipe param/eq/mat. Instead,
+        // refresh the values the caller may have changed via
+        // Slvs_SetParamValue / Slvs_SetConstraintValue, reset
+        // `known` so the solver treats every param as free again,
+        // and re-apply the dragged set (Slvs_MarkDragged is allowed
+        // between solves and doesn't invalidate).
+        for(Param &p : solver_cpp->sys->param) {
+            Param *src = solver_cpp->sk->GetParam(p.h);
+            p.val   = src->val;
+            p.known = false;
         }
-        for (hParam &parh : e->param) {
-            if (parh.v != 0) {
-                // get params for this entity and add it to the system
-                Param *p = solver_cpp->sk->GetParam(parh);
+        solver_cpp->sys->dragged.clear();
+        for(hParam p : *solver_cpp->dragged) {
+            solver_cpp->sys->dragged.insert(p);
+        }
+    } else {
+        // ── Slow path: build sys from scratch ──────────────────────
+        solver_cpp->sys->Clear();
+
+        // add params from entities on sketch
+        for(EntityBase &ent : solver_cpp->sk->entity) {
+            EntityBase *e = &ent;
+            // skip entities from other groups
+            if (e->group.v != shg) {
+                continue;
+            }
+            for (hParam &parh : e->param) {
+                if (parh.v != 0) {
+                    // get params for this entity and add it to the system
+                    Param *p = solver_cpp->sk->GetParam(parh);
+                    p->known = false;
+                    solver_cpp->sys->param.Add(p);
+                }
+            }
+        }
+
+        // add params from constraints
+        for(ConstraintBase &con : solver_cpp->sk->constraint) {
+            ConstraintBase *c = &con;
+            if(c->group.v != shg)
+                continue;
+            // If we're solving a sketch twice without calling `Slvs_ClearSketch()` in between,
+            // we already have a constraint param in the sketch, and regeneration would simply
+            // create another one and orphan the existing one. While this doesn't create any
+            // correctness issues, it does waste memory, so identify this case and regenerate
+            // only if we actually need to.
+            if(c->valP.v) {
+                // Reset `known=false` so the solver treats this constraint-internal
+                // param as an unknown on re-solve. `System::Solve` sets `known=true`
+                // on every solved param at the end of a successful solve, and
+                // `Expr::DeepCopyWithParamsAsPointers` folds any `known` param into
+                // a CONSTANT. Without this reset, on the second `Slvs_SolveSketch`
+                // call PT_ON_LINE / PARALLEL / SAME_ORIENTATION constraint params
+                // would be frozen at their previous values → INCONSISTENT.
+                // Mirrors the entity-param reset above.
+                Param *p = solver_cpp->sk->GetParam(c->valP);
                 p->known = false;
                 solver_cpp->sys->param.Add(p);
+                continue;
+            }
+            // If `valP` is 0, this is either a constraint which doesn't have a param, or one
+            // which we haven't seen before, so try to regenerate.
+            // This generates at most a single additional param
+            c->Generate(&solver_cpp->sk->param);
+            if(c->valP.v) {
+                Param *p = solver_cpp->sk->GetParam(c->valP);
+                p->known = false;
+                solver_cpp->sys->param.Add(p);
+
+                if(Slvs_CanInitiallySatisfy(*c)) {
+                    c->ModifyToSatisfy();
+                }
             }
         }
-    }
 
-    // add params from constraints
-    for(ConstraintBase &con : solver_cpp->sk->constraint) {
-        ConstraintBase *c = &con;
-        if(c->group.v != shg)
-            continue;
-        // If we're solving a sketch twice without calling `Slvs_ClearSketch()` in between,
-        // we already have a constraint param in the sketch, and regeneration would simply
-        // create another one and orphan the existing one. While this doesn't create any
-        // correctness issues, it does waste memory, so identify this case and regenerate
-        // only if we actually need to.
-        if(c->valP.v) {
-            // Reset `known=false` so the solver treats this constraint-internal
-            // param as an unknown on re-solve. `System::Solve` sets `known=true`
-            // on every solved param at the end of a successful solve, and
-            // `Expr::DeepCopyWithParamsAsPointers` folds any `known` param into
-            // a CONSTANT. Without this reset, on the second `Slvs_SolveSketch`
-            // call PT_ON_LINE / PARALLEL / SAME_ORIENTATION constraint params
-            // would be frozen at their previous values → INCONSISTENT.
-            // Mirrors the entity-param reset above.
-            Param *p = solver_cpp->sk->GetParam(c->valP);
-            p->known = false;
-            solver_cpp->sys->param.Add(p);
-            continue;
+        // mark dragged params — pull from the current Solver's set into solver_cpp->sys->
+        for(hParam p : *solver_cpp->dragged) {
+            solver_cpp->sys->dragged.insert(p);
         }
-        // If `valP` is 0, this is either a constraint which doesn't have a param, or one
-        // which we haven't seen before, so try to regenerate.
-        // This generates at most a single additional param
-        c->Generate(&solver_cpp->sk->param);
-        if(c->valP.v) {
-            Param *p = solver_cpp->sk->GetParam(c->valP);
-            p->known = false;
-            solver_cpp->sys->param.Add(p);
-
-            if(Slvs_CanInitiallySatisfy(*c)) {
-                c->ModifyToSatisfy();
-            }
-        }
-    }
-
-    // mark dragged params — pull from the current Solver's set into solver_cpp->sys->
-    for(hParam p : *solver_cpp->dragged) {
-        solver_cpp->sys->dragged.insert(p);
     }
 
     // for(hParam &par : solver_cpp->sys->dragged) {
@@ -1171,6 +1214,11 @@ void Slvs_SetConstraintGroup(Slvs_Solver *solver, uint32_t ch, uint32_t new_grou
     // iteration sites (Slvs_SolveSketch param-collection, System::
     // WriteEquationsExceptFor, System::FindWhichToRemoveToFixJacobian),
     // so this single setter is sufficient.
+    //
+    // Changing a constraint's group changes which equations get filtered
+    // INTO the system at the next solve, so the cached symbolic Jacobian
+    // (which was built for the previous filtering) is no longer valid.
+    solver_cpp->InvalidateJacobianCache();
     ConstraintBase* c = solver_cpp->sk->constraint.FindById(hConstraint { ch });
     c->group.v = new_group;
 }

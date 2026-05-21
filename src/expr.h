@@ -15,6 +15,10 @@
 #include "dsc.h"
 #include "param.h"
 
+// Forward-declared so this header doesn't pull in <mimalloc.h>.
+struct mi_heap_s;
+typedef struct mi_heap_s mi_heap_t;
+
 namespace SolveSpace {
 
 class Sketch;
@@ -34,6 +38,17 @@ public:
         // Operands
         CONSTANT       = 20,
         VARIABLE       = 21,
+        // An indirectly-held constant: stores a `const double *` and
+        // reads through it on every `Eval`. The pointer is stable for
+        // the lifetime of whatever the caller pointed at. Treated as a
+        // leaf with no children, derivative 0, and **not** a foldable
+        // constant (its numeric value may change between Eval calls,
+        // so `FoldConstants` must not fold past it). Used to embed
+        // user-mutable values like `ConstraintBase::valA` in cached
+        // Jacobian trees: the cache survives `Slvs_SetConstraintValue`
+        // because the next `Eval` picks up the new value from the
+        // same address.
+        CONST_PTR      = 22,
 
         // Binary ops
         PLUS           = 100,
@@ -53,10 +68,11 @@ public:
     Op      op;
     Expr    *a;
     union {
-        double  v;
-        hParam  parh;
-        Param  *parp;
-        Expr    *b;
+        double        v;             // CONSTANT
+        hParam        parh;          // PARAM
+        Param        *parp;          // PARAM_PTR
+        const double *const_ptr;     // CONST_PTR
+        Expr         *b;             // binary ops
     };
 
     Expr() = default;
@@ -64,6 +80,9 @@ public:
 
     static Expr *From(hParam p);
     static Expr *From(double v);
+    // Build an indirect constant — the resulting Expr reads through
+    // `*ptr` on each Eval. See Op::CONST_PTR.
+    static Expr *FromPtr(const double *ptr);
 
     Expr *AnyOp(Op op, Expr *b);
     inline Expr *Plus (Expr *b_) { return AnyOp(Op::PLUS,  b_); }
@@ -112,6 +131,14 @@ public:
     Expr *DeepCopyWithParamsAsPointers(ParamList *firstTry,
                                        ParamList *thenTry,
                                        bool foldConstants = false) const;
+    // Deep-copy this tree allocating every node from `heap` (instead
+    // of the thread's transient AllocTemporary heap). Used by the
+    // Jacobian cache (Phase 2) to promote Exprs out of the per-solve
+    // temp arena into the per-Solver persistent arena so they survive
+    // `FreeAllTemporary`. Op::PARAM_PTR / Op::CONST_PTR leaves keep
+    // their pointers — the caller is responsible for ensuring the
+    // pointed-to Param / external double outlives the copy.
+    Expr *DeepCopyIntoHeap(mi_heap_t *heap) const;
 
     static Expr *Parse(const std::string &input, std::string *error);
     static Expr *From(const std::string &input, bool popUpError);

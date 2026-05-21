@@ -11,6 +11,9 @@
 
 #include "util.h"
 #include "platform.h"
+// Pulls in the Solver type + EnsureCurrentSolver() used below by
+// AllocTemporary / FreeAllTemporary.
+#include "solvespace.h"
 
 namespace SolveSpace {
 namespace Platform {
@@ -71,32 +74,31 @@ void DebugPrint(const char *fmt, ...) {
 
 //-----------------------------------------------------------------------------
 // Temporary arena.
+//
+// The per-solve scratch heap used by AllocExpr() (see expr.cpp) lives
+// inside the current `Solver` (see solver.h). One heap per Solver
+// instance — single-threaded callers see the same lazy thread-local
+// behaviour as before; the handle-based API (Phase 0.5+) lets a single
+// thread juggle several Solvers, each with its own heap.
 //-----------------------------------------------------------------------------
 
-struct MimallocHeap {
-    mi_heap_t *heap = NULL;
-
-    ~MimallocHeap() {
-        if(heap != NULL)
-            mi_heap_destroy(heap);
-    }
-};
-
-static thread_local MimallocHeap TempArena;
-
 void *AllocTemporary(size_t size) {
-    if(TempArena.heap == NULL) {
-        TempArena.heap = mi_heap_new();
-        ssassert(TempArena.heap != NULL, "out of memory");
+    Solver &s = EnsureCurrentSolver();
+    if(s.temp_heap == nullptr) {
+        s.temp_heap = mi_heap_new();
+        ssassert(s.temp_heap != nullptr, "out of memory");
     }
-    void *ptr = mi_heap_zalloc(TempArena.heap, size);
-    ssassert(ptr != NULL, "out of memory");
+    void *ptr = mi_heap_zalloc(s.temp_heap, size);
+    ssassert(ptr != nullptr, "out of memory");
     return ptr;
 }
 
 void FreeAllTemporary() {
-    MimallocHeap temp;
-    std::swap(TempArena.heap, temp.heap);
+    Solver &s = EnsureCurrentSolver();
+    if(s.temp_heap != nullptr) {
+        mi_heap_destroy(s.temp_heap);
+        s.temp_heap = nullptr;
+    }
 }
 
 }

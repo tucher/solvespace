@@ -78,12 +78,14 @@ target_sources(slvs-solver INTERFACE
     handle.h
     param.h
     platform/platform.h
+    solver.h
     solvespace.h
 
     constrainteq.cpp
     entity.cpp
     expr.cpp
     platform/platformbase.cpp
+    solver.cpp
     system.cpp
     util.cpp
 )

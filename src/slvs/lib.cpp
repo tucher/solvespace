@@ -11,7 +11,20 @@
 
 namespace SolveSpace {
 
-Sketch SK = {};
+// `Sketch SK`, `System SYS`, and `ParamSet dragged` are no longer
+// process-globals. They moved into the per-instance `Solver` (see
+// solver.h / solver.cpp). Existing `SK.foo`, `SYS.foo` references
+// inside the internal C++ code still work via the macros in solver.h,
+// which read `CurrentSolver` (a thread-local pointer).
+//
+// Public API contract: every `Slvs_*` data-mutating function takes a
+// `Slvs_Solver *` as its first argument. On entry, the function sets
+// `CurrentSolver` to that handle (saving + restoring the previous via
+// the `WithCurrentSolver` RAII helper below) so that all SK / SYS uses
+// inside route to the caller's solver. The thread-local is an
+// implementation detail — it lets the existing ~290 SK/SYS references
+// across constrainteq.cpp / entity.cpp / system.cpp keep working
+// unchanged while the public API is fully explicit.
 
 void Platform::FatalError(const std::string &message) {
     fprintf(stderr, "%s", message.c_str());
@@ -26,8 +39,24 @@ void Group::GenerateEquations(IdList<Equation,hEquation> *) {
 
 using namespace SolveSpace;
 
-static System SYS;
-static ParamSet dragged;
+namespace {
+// RAII: every public Slvs_* entry point selects its Solver as the
+// thread's current via the constructor, restoring the previous on
+// scope exit. Nested Slvs_* calls (e.g. `Slvs_Coincident` →
+// `Slvs_AddConstraint` → `Slvs_AddParam`) compose correctly: each
+// nested scope writes the same pointer it inherits, then restores it.
+struct WithCurrentSolver {
+    SolveSpace::Solver *prev;
+    explicit WithCurrentSolver(Slvs_Solver *handle)
+        : prev(SolveSpace::CurrentSolver) {
+        SolveSpace::CurrentSolver =
+            reinterpret_cast<SolveSpace::Solver *>(handle);
+    }
+    ~WithCurrentSolver() { SolveSpace::CurrentSolver = prev; }
+    WithCurrentSolver(const WithCurrentSolver &)            = delete;
+    WithCurrentSolver &operator=(const WithCurrentSolver &) = delete;
+};
+}  // namespace
 
 extern "C" {
 
@@ -216,7 +245,10 @@ bool Slvs_IsCircle(Slvs_Entity e) {
     return e.type == SLVS_E_CIRCLE || e.type == SLVS_E_ARC_OF_CIRCLE;
 }
 
-Slvs_hParam Slvs_AddParam(double val) {
+// File-local helper. Always called from inside a public Slvs_* entry
+// point (which has already pinned the right `CurrentSolver`), so it
+// has no Slvs_Solver* parameter of its own — it reads SK via the macro.
+static Slvs_hParam Slvs_AddParam(double val) {
     Param pa = {};
     pa.val   = val;
     SK.param.AddAndAssignId(&pa);
@@ -224,7 +256,8 @@ Slvs_hParam Slvs_AddParam(double val) {
 }
 
 // entities
-Slvs_Entity Slvs_AddPoint2D(uint32_t grouph, double u, double v, Slvs_Entity workplane) {
+Slvs_Entity Slvs_AddPoint2D(Slvs_Solver *solver, uint32_t grouph, double u, double v, Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     Slvs_hParam uph      = Slvs_AddParam(u);
     Slvs_hParam vph      = Slvs_AddParam(v);
     EntityBase e  = {};
@@ -245,7 +278,8 @@ Slvs_Entity Slvs_AddPoint2D(uint32_t grouph, double u, double v, Slvs_Entity wor
     return ce;
 }
 
-Slvs_Entity Slvs_AddPoint3D(uint32_t grouph, double x, double y, double z) {
+Slvs_Entity Slvs_AddPoint3D(Slvs_Solver *solver, uint32_t grouph, double x, double y, double z) {
+    WithCurrentSolver _ws(solver);
     Slvs_hParam xph      = Slvs_AddParam(x);
     Slvs_hParam yph      = Slvs_AddParam(y);
     Slvs_hParam zph      = Slvs_AddParam(z);
@@ -269,7 +303,8 @@ Slvs_Entity Slvs_AddPoint3D(uint32_t grouph, double x, double y, double z) {
     return ce;
 }
 
-Slvs_Entity Slvs_AddNormal2D(uint32_t grouph, Slvs_Entity workplane) {
+Slvs_Entity Slvs_AddNormal2D(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(!Slvs_IsWorkplane(workplane)) {
         Platform::FatalError("workplane argument is not a workplane");
     }
@@ -287,7 +322,8 @@ Slvs_Entity Slvs_AddNormal2D(uint32_t grouph, Slvs_Entity workplane) {
     return ce;
 }
 
-Slvs_Entity Slvs_AddNormal3D(uint32_t grouph, double qw, double qx, double qy, double qz) {
+Slvs_Entity Slvs_AddNormal3D(Slvs_Solver *solver, uint32_t grouph, double qw, double qx, double qy, double qz) {
+    WithCurrentSolver _ws(solver);
     Slvs_hParam wph      = Slvs_AddParam(qw);
     Slvs_hParam xph      = Slvs_AddParam(qx);
     Slvs_hParam yph      = Slvs_AddParam(qy);
@@ -314,7 +350,8 @@ Slvs_Entity Slvs_AddNormal3D(uint32_t grouph, double qw, double qx, double qy, d
     return ce;
 }
 
-Slvs_Entity Slvs_AddDistance(uint32_t grouph, double value, Slvs_Entity workplane) {
+Slvs_Entity Slvs_AddDistance(Slvs_Solver *solver, uint32_t grouph, double value, Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(!Slvs_IsWorkplane(workplane)) {
         Platform::FatalError("workplane argument is not a workplane");
     }
@@ -335,7 +372,8 @@ Slvs_Entity Slvs_AddDistance(uint32_t grouph, double value, Slvs_Entity workplan
     return ce;
 }
 
-Slvs_Entity Slvs_AddLine2D(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity workplane) {
+Slvs_Entity Slvs_AddLine2D(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(!Slvs_IsWorkplane(workplane)) {
         Platform::FatalError("workplane argument is not a workplane");
     } else if(!Slvs_IsPoint2D(ptA)) {
@@ -361,7 +399,8 @@ Slvs_Entity Slvs_AddLine2D(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Sl
     return ce;
 }
 
-Slvs_Entity Slvs_AddLine3D(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB) {
+Slvs_Entity Slvs_AddLine3D(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB) {
+    WithCurrentSolver _ws(solver);
     if(!Slvs_IsPoint3D(ptA)) {
         Platform::FatalError("ptA argument is not a 3d point");
     } else if(!Slvs_IsPoint3D(ptB)) {
@@ -385,7 +424,8 @@ Slvs_Entity Slvs_AddLine3D(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB) {
     return ce;
 }
 
-Slvs_Entity Slvs_AddCubic(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity ptC, Slvs_Entity ptD, Slvs_Entity workplane) {
+Slvs_Entity Slvs_AddCubic(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity ptC, Slvs_Entity ptD, Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(!Slvs_IsWorkplane(workplane)) {
         Platform::FatalError("workplane argument is not a workplane");
     } else if(!Slvs_IsPoint2D(ptA)) {
@@ -420,8 +460,9 @@ Slvs_Entity Slvs_AddCubic(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slv
 }
 
 
-Slvs_Entity Slvs_AddArc(uint32_t grouph, Slvs_Entity normal, Slvs_Entity center, Slvs_Entity start, Slvs_Entity end,
+Slvs_Entity Slvs_AddArc(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity normal, Slvs_Entity center, Slvs_Entity start, Slvs_Entity end,
                             Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(!Slvs_IsWorkplane(workplane)) {
         Platform::FatalError("workplane argument is not a workplane");
     } else if(!Slvs_IsNormal3D(normal)) {
@@ -455,8 +496,9 @@ Slvs_Entity Slvs_AddArc(uint32_t grouph, Slvs_Entity normal, Slvs_Entity center,
     return ce;
 }
 
-Slvs_Entity Slvs_AddCircle(uint32_t grouph, Slvs_Entity normal, Slvs_Entity center, Slvs_Entity radius,
+Slvs_Entity Slvs_AddCircle(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity normal, Slvs_Entity center, Slvs_Entity radius,
                             Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(!Slvs_IsWorkplane(workplane)) {
         Platform::FatalError("workplane argument is not a workplane");
     } else if(!Slvs_IsNormal3D(normal)) {
@@ -486,7 +528,8 @@ Slvs_Entity Slvs_AddCircle(uint32_t grouph, Slvs_Entity normal, Slvs_Entity cent
     return ce;
 }
 
-Slvs_Entity Slvs_AddWorkplane(uint32_t grouph, Slvs_Entity origin, Slvs_Entity nm) {
+Slvs_Entity Slvs_AddWorkplane(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity origin, Slvs_Entity nm) {
+    WithCurrentSolver _ws(solver);
     EntityBase e  = {};
     e.type        = EntityBase::Type::WORKPLANE;
     e.group.v     = grouph;
@@ -505,21 +548,23 @@ Slvs_Entity Slvs_AddWorkplane(uint32_t grouph, Slvs_Entity origin, Slvs_Entity n
     return ce;
 }
 
-Slvs_Entity Slvs_AddBase2D(uint32_t grouph) {
+Slvs_Entity Slvs_AddBase2D(Slvs_Solver *solver, uint32_t grouph) {
+    WithCurrentSolver _ws(solver);
     Vector u      = Vector::From(1, 0, 0);
     Vector v      = Vector::From(0, 1, 0);
     Quaternion q  = Quaternion::From(u, v);
-    Slvs_Entity nm = Slvs_AddNormal3D(grouph, q.w, q.vx, q.vy, q.vz);
-    return Slvs_AddWorkplane(grouph, Slvs_AddPoint3D(grouph, 0, 0, 0), nm);
+    Slvs_Entity nm = Slvs_AddNormal3D(solver, grouph, q.w, q.vx, q.vy, q.vz);
+    return Slvs_AddWorkplane(solver, grouph, Slvs_AddPoint3D(solver, grouph, 0, 0, 0), nm);
 }
 
 // constraints
 
-Slvs_Constraint Slvs_AddConstraint(uint32_t grouph,
+Slvs_Constraint Slvs_AddConstraint(Slvs_Solver *solver, uint32_t grouph,
     int type, Slvs_Entity workplane, double val, Slvs_Entity ptA,
     Slvs_Entity ptB = SLVS_E_NONE, Slvs_Entity entityA = SLVS_E_NONE,
     Slvs_Entity entityB = SLVS_E_NONE, Slvs_Entity entityC = SLVS_E_NONE,
     Slvs_Entity entityD = SLVS_E_NONE, int other = 0, int other2 = 0) {
+    WithCurrentSolver _ws(solver);
     ConstraintBase c = {};
     c.type           = Slvs_CTypeToConstraintBaseType(type);
     c.group.v        = grouph;
@@ -552,159 +597,177 @@ Slvs_Constraint Slvs_AddConstraint(uint32_t grouph,
     return cc;
 }
 
-Slvs_Constraint Slvs_Coincident(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_Coincident(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsPoint(entityA) && Slvs_IsPoint(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_POINTS_COINCIDENT, workplane, 0., entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_POINTS_COINCIDENT, workplane, 0., entityA, entityB);
     } else if(Slvs_IsPoint(entityA) && Slvs_IsWorkplane(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PT_IN_PLANE, SLVS_E_FREE_IN_3D, 0., entityA, SLVS_E_NONE, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PT_IN_PLANE, SLVS_E_FREE_IN_3D, 0., entityA, SLVS_E_NONE, entityB);
     } else if(Slvs_IsPoint(entityA) && Slvs_IsLine(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PT_ON_LINE, workplane, 0., entityA, SLVS_E_NONE, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PT_ON_LINE, workplane, 0., entityA, SLVS_E_NONE, entityB);
     } else if(Slvs_IsPoint(entityA) && (Slvs_IsCircle(entityB) || Slvs_IsArc(entityB))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PT_ON_CIRCLE, workplane, 0., entityA, SLVS_E_NONE, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PT_ON_CIRCLE, workplane, 0., entityA, SLVS_E_NONE, entityB);
     }
     Platform::FatalError("Invalid arguments for coincident constraint");
 }
 
-Slvs_Constraint Slvs_Distance(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, double value, Slvs_Entity workplane) {
+Slvs_Constraint Slvs_Distance(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, double value, Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsPoint(entityA) && Slvs_IsPoint(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PT_PT_DISTANCE, workplane, value, entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PT_PT_DISTANCE, workplane, value, entityA, entityB);
     } else if(Slvs_IsPoint(entityA) && Slvs_IsWorkplane(entityB) && Slvs_Is3D(workplane)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PT_PLANE_DISTANCE, entityB, value, entityA, SLVS_E_NONE, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PT_PLANE_DISTANCE, entityB, value, entityA, SLVS_E_NONE, entityB);
     } else if(Slvs_IsPoint(entityA) && Slvs_IsLine(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PT_LINE_DISTANCE, workplane, value, entityA, SLVS_E_NONE, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PT_LINE_DISTANCE, workplane, value, entityA, SLVS_E_NONE, entityB);
     }
     Platform::FatalError("Invalid arguments for distance constraint");
 }
 
-Slvs_Constraint Slvs_Equal(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_Equal(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsLine(entityA) && Slvs_IsLine(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_EQUAL_LENGTH_LINES, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_EQUAL_LENGTH_LINES, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
     } else if(Slvs_IsLine(entityA) && (Slvs_IsArc(entityB) || Slvs_IsCircle(entityB))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_EQUAL_LINE_ARC_LEN, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_EQUAL_LINE_ARC_LEN, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
     } else if((Slvs_IsArc(entityA) || Slvs_IsCircle(entityA)) && (Slvs_IsArc(entityB) || Slvs_IsCircle(entityB))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_EQUAL_RADIUS, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_EQUAL_RADIUS, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
     }
     Platform::FatalError("Invalid arguments for equal constraint");
 }
 
-Slvs_Constraint Slvs_EqualAngle(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity entityC, Slvs_Entity entityD, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_EqualAngle(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity entityC, Slvs_Entity entityD, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsLine2D(entityA) && Slvs_IsLine2D(entityB) && Slvs_IsLine2D(entityC) && Slvs_IsLine2D(entityD) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_EQUAL_ANGLE, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, entityC, entityD);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_EQUAL_ANGLE, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, entityC, entityD);
     }
     Platform::FatalError("Invalid arguments for equal angle constraint");
 }
 
-Slvs_Constraint Slvs_EqualPointToLine(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity entityC, Slvs_Entity entityD, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_EqualPointToLine(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity entityC, Slvs_Entity entityD, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsPoint2D(entityA) && Slvs_IsLine2D(entityB) && Slvs_IsPoint2D(entityC) && Slvs_IsLine2D(entityD) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_EQ_PT_LN_DISTANCES, workplane, 0., entityA, entityB, entityC, entityD);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_EQ_PT_LN_DISTANCES, workplane, 0., entityA, entityB, entityC, entityD);
     }
     Platform::FatalError("Invalid arguments for equal point to line constraint");
 }
 
-Slvs_Constraint Slvs_Ratio(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, double value, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_Ratio(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, double value, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsLine2D(entityA) && Slvs_IsLine2D(entityB) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_LENGTH_RATIO, workplane, value, SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_LENGTH_RATIO, workplane, value, SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
     }
     Platform::FatalError("Invalid arguments for ratio constraint");
 }
 
-Slvs_Constraint Slvs_Symmetric(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity entityC = SLVS_E_NONE, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_Symmetric(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity entityC = SLVS_E_NONE, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsPoint3D(entityA) && Slvs_IsPoint3D(entityB) && Slvs_IsWorkplane(entityC) && Slvs_IsFreeIn3D(workplane)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_SYMMETRIC, workplane, 0., entityA, entityB, entityC);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_SYMMETRIC, workplane, 0., entityA, entityB, entityC);
     } else if(Slvs_IsPoint2D(entityA) && Slvs_IsPoint2D(entityB) && Slvs_IsWorkplane(entityC) && Slvs_IsFreeIn3D(workplane)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_SYMMETRIC, entityC, 0., entityA, entityB, entityC);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_SYMMETRIC, entityC, 0., entityA, entityB, entityC);
     } else if(Slvs_IsPoint2D(entityA) && Slvs_IsPoint2D(entityB) && Slvs_IsLine(entityC)) {
         if(Slvs_IsFreeIn3D(workplane)) {
             Platform::FatalError("3d workplane given for a 2d constraint");
         }
-        return Slvs_AddConstraint(grouph, SLVS_C_SYMMETRIC_LINE, workplane, 0., entityA, entityB, entityC);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_SYMMETRIC_LINE, workplane, 0., entityA, entityB, entityC);
     }
     Platform::FatalError("Invalid arguments for symmetric constraint");
 }
 
-Slvs_Constraint Slvs_SymmetricH(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity workplane) {
+Slvs_Constraint Slvs_SymmetricH(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsFreeIn3D(workplane)) {
         Platform::FatalError("3d workplane given for a 2d constraint");
     } else if(Slvs_IsPoint2D(ptA) && Slvs_IsPoint2D(ptB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_SYMMETRIC_HORIZ, workplane, 0., ptA, ptB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_SYMMETRIC_HORIZ, workplane, 0., ptA, ptB);
     }
     Platform::FatalError("Invalid arguments for symmetric horizontal constraint");
 }
 
-Slvs_Constraint Slvs_SymmetricV(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity workplane) {
+Slvs_Constraint Slvs_SymmetricV(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity workplane) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsFreeIn3D(workplane)) {
         Platform::FatalError("3d workplane given for a 2d constraint");
     } else if(Slvs_IsPoint2D(ptA) && Slvs_IsPoint2D(ptB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_SYMMETRIC_VERT, workplane, 0., ptA, ptB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_SYMMETRIC_VERT, workplane, 0., ptA, ptB);
     }
     Platform::FatalError("Invalid arguments for symmetric vertical constraint");
 }
 
-Slvs_Constraint Slvs_Midpoint(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_Midpoint(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsPoint(ptA) && Slvs_IsLine(ptB) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_AT_MIDPOINT, workplane, 0., ptA, SLVS_E_NONE, ptB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_AT_MIDPOINT, workplane, 0., ptA, SLVS_E_NONE, ptB);
     }
     Platform::FatalError("Invalid arguments for midpoint constraint");
 }
 
-Slvs_Constraint Slvs_Horizontal(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity workplane, Slvs_Entity entityB = SLVS_E_NONE) {
+Slvs_Constraint Slvs_Horizontal(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity workplane, Slvs_Entity entityB = SLVS_E_NONE) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsFreeIn3D(workplane)) {
         Platform::FatalError("Horizontal constraint is not supported in 3D");
     } else if(Slvs_IsLine2D(entityA)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_HORIZONTAL, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_HORIZONTAL, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA);
     } else if(Slvs_IsPoint2D(entityA) && Slvs_IsPoint2D(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_HORIZONTAL, workplane, 0., entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_HORIZONTAL, workplane, 0., entityA, entityB);
     }
     Platform::FatalError("Invalid arguments for horizontal constraint");
 }
 
-Slvs_Constraint Slvs_Vertical(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity workplane, Slvs_Entity entityB = SLVS_E_NONE) {
+Slvs_Constraint Slvs_Vertical(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity workplane, Slvs_Entity entityB = SLVS_E_NONE) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsFreeIn3D(workplane)) {
         Platform::FatalError("Vertical constraint is not supported in 3D");
     } else if(Slvs_IsLine2D(entityA)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_VERTICAL, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_VERTICAL, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA);
     } else if(Slvs_IsPoint2D(entityA) && Slvs_IsPoint2D(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_VERTICAL, workplane, 0., entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_VERTICAL, workplane, 0., entityA, entityB);
     }
     Platform::FatalError("Invalid arguments for horizontal constraint");
 }
 
-Slvs_Constraint Slvs_Diameter(uint32_t grouph, Slvs_Entity entityA, double value) {
+Slvs_Constraint Slvs_Diameter(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, double value) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsArc(entityA) || Slvs_IsCircle(entityA)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_DIAMETER, SLVS_E_FREE_IN_3D, value, SLVS_E_NONE, SLVS_E_NONE, entityA);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_DIAMETER, SLVS_E_FREE_IN_3D, value, SLVS_E_NONE, SLVS_E_NONE, entityA);
     }
     Platform::FatalError("Invalid arguments for diameter constraint");
 }
 
-Slvs_Constraint Slvs_SameOrientation(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB) {
+Slvs_Constraint Slvs_SameOrientation(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsNormal3D(entityA) && Slvs_IsNormal3D(entityB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_SAME_ORIENTATION, SLVS_E_FREE_IN_3D, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_SAME_ORIENTATION, SLVS_E_FREE_IN_3D, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
     }
     Platform::FatalError("Invalid arguments for same orientation constraint");
 }
 
-Slvs_Constraint Slvs_Angle(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, double value, Slvs_Entity workplane = SLVS_E_FREE_IN_3D, int inverse = 0) {
+Slvs_Constraint Slvs_Angle(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, double value, Slvs_Entity workplane = SLVS_E_FREE_IN_3D, int inverse = 0) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsLine2D(entityA) && Slvs_IsLine2D(entityB) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_ANGLE, workplane, value, SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, inverse);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_ANGLE, workplane, value, SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, inverse);
     }
     Platform::FatalError("Invalid arguments for angle constraint");
 }
 
-Slvs_Constraint Slvs_Perpendicular(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D, int inverse = 0) {
+Slvs_Constraint Slvs_Perpendicular(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D, int inverse = 0) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsLine2D(entityA) && Slvs_IsLine2D(entityB) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PERPENDICULAR, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, inverse);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PERPENDICULAR, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, inverse);
     }
     Platform::FatalError("Invalid arguments for perpendicular constraint");
 }
 
-Slvs_Constraint Slvs_Parallel(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_Parallel(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsLine2D(entityA) && Slvs_IsLine2D(entityB) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PARALLEL, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PARALLEL, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
     }
     Platform::FatalError("Invalid arguments for parallel constraint");
 }
 
-Slvs_Constraint Slvs_Tangent(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_Tangent(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsArc(entityA) && Slvs_IsLine2D(entityB)) {
         if(Slvs_IsFreeIn3D(workplane)) {
             Platform::FatalError("3d workplane given for a 2d constraint");
@@ -723,7 +786,7 @@ Slvs_Constraint Slvs_Tangent(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity e
                                         "endpoint. Constrain them with Constrain -> "
                                         "On Point before constraining tangent.");
         }
-        return Slvs_AddConstraint(grouph, SLVS_C_ARC_LINE_TANGENT, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, other);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_ARC_LINE_TANGENT, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, other);
     } else if(Slvs_IsCubic(entityA) && Slvs_IsLine2D(entityB) && Slvs_IsFreeIn3D(workplane)) {
         EntityBase* skEntityA = SK.entity.FindById(hEntity { entityA.h });
         Vector as = skEntityA->CubicGetStartNum(), af = skEntityA->CubicGetFinishNum();
@@ -739,7 +802,7 @@ Slvs_Constraint Slvs_Tangent(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity e
                                         "endpoint. Constrain them with Constrain -> "
                                         "On Point before constraining tangent.");
         }
-        return Slvs_AddConstraint(grouph, SLVS_C_CUBIC_LINE_TANGENT, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, other);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_CUBIC_LINE_TANGENT, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, other);
     } else if((Slvs_IsArc(entityA) || Slvs_IsCubic(entityA)) && (Slvs_IsArc(entityB) || Slvs_IsCubic(entityB))) {
         if(Slvs_IsFreeIn3D(workplane)) {
             Platform::FatalError("3d workplane given for a 2d constraint");
@@ -767,28 +830,31 @@ Slvs_Constraint Slvs_Tangent(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity e
                                         "with Constrain -> On Point before constraining "
                                         "tangent.");
         }
-        return Slvs_AddConstraint(grouph, SLVS_C_CURVE_CURVE_TANGENT, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, other, other2);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_CURVE_CURVE_TANGENT, workplane, 0., SLVS_E_NONE, SLVS_E_NONE, entityA, entityB, SLVS_E_NONE, SLVS_E_NONE, other, other2);
     }
     Platform::FatalError("Invalid arguments for tangent constraint");
 }
 
-Slvs_Constraint Slvs_DistanceProj(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, double value) {
+Slvs_Constraint Slvs_DistanceProj(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity ptA, Slvs_Entity ptB, double value) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsPoint(ptA) && Slvs_IsPoint(ptB)) {
-        return Slvs_AddConstraint(grouph, SLVS_C_PROJ_PT_DISTANCE, SLVS_E_FREE_IN_3D, value, ptA, ptB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_PROJ_PT_DISTANCE, SLVS_E_FREE_IN_3D, value, ptA, ptB);
     }
     Platform::FatalError("Invalid arguments for projected distance constraint");
 }
 
-Slvs_Constraint Slvs_LengthDiff(uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, double value, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_LengthDiff(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity entityA, Slvs_Entity entityB, double value, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsLine(entityA) && Slvs_IsLine(entityB) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_LENGTH_DIFFERENCE, workplane, value, SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_LENGTH_DIFFERENCE, workplane, value, SLVS_E_NONE, SLVS_E_NONE, entityA, entityB);
     }
     Platform::FatalError("Invalid arguments for length difference constraint");
 }
 
-Slvs_Constraint Slvs_Dragged(uint32_t grouph, Slvs_Entity ptA, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+Slvs_Constraint Slvs_Dragged(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity ptA, Slvs_Entity workplane = SLVS_E_FREE_IN_3D) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsPoint(ptA) && (Slvs_IsWorkplane(workplane) || Slvs_IsFreeIn3D(workplane))) {
-        return Slvs_AddConstraint(grouph, SLVS_C_WHERE_DRAGGED, workplane, 0., ptA);
+        return Slvs_AddConstraint(solver, grouph, SLVS_C_WHERE_DRAGGED, workplane, 0., ptA);
     }
     Platform::FatalError("Invalid arguments for dragged constraint");
 }
@@ -836,29 +902,34 @@ void Slvs_MakeQuaternion(double ux, double uy, double uz,
     *qz = q.vz;
 }
 
-void Slvs_ClearSketch()
+void Slvs_ClearSketch(Slvs_Solver *solver)
 {
-    dragged.clear();
+    WithCurrentSolver _ws(solver);
+    // Former globals — now per-Solver fields. See solver.h.
+    EnsureCurrentSolver().dragged->clear();
     SYS.Clear();
     SK.param.Clear();
     SK.entity.Clear();
     SK.constraint.Clear();
 }
 
-void Slvs_MarkDragged(Slvs_Entity ptA) {
+void Slvs_MarkDragged(Slvs_Solver *solver, Slvs_Entity ptA) {
+    WithCurrentSolver _ws(solver);
     if(Slvs_IsPoint(ptA)) {
         const size_t params = Slvs_IsPoint3D(ptA) ? 3 : 2;
+        ParamSet &drag = *EnsureCurrentSolver().dragged;
         for(size_t i = 0; i < params; ++i) {
             hParam p = hParam { ptA.param[i] };
-            dragged.insert(p);
+            drag.insert(p);
         }
     } else {
         SolveSpace::Platform::FatalError("Invalid entity for marking dragged");
     }
 }
 
-Slvs_SolveResult Slvs_SolveSketch(uint32_t shg, Slvs_hConstraint **bad = nullptr)
+Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t shg, Slvs_hConstraint **bad = nullptr)
 {
+    WithCurrentSolver _ws(solver);
     SYS.Clear();
 
     Group g = {};
@@ -920,8 +991,8 @@ Slvs_SolveResult Slvs_SolveSketch(uint32_t shg, Slvs_hConstraint **bad = nullptr
         }
     }
 
-    // mark dragged params
-    for(hParam p : dragged) {
+    // mark dragged params — pull from the current Solver's set into SYS.
+    for(hParam p : *EnsureCurrentSolver().dragged) {
         SYS.dragged.insert(p);
     }
 
@@ -979,20 +1050,23 @@ Slvs_SolveResult Slvs_SolveSketch(uint32_t shg, Slvs_hConstraint **bad = nullptr
     return sr;
 }
 
-double Slvs_GetParamValue(uint32_t ph)
+double Slvs_GetParamValue(Slvs_Solver *solver, uint32_t ph)
 {
+    WithCurrentSolver _ws(solver);
     Param* p = SK.param.FindById(hParam { ph });
     return p->val;
 }
 
-void Slvs_SetParamValue(uint32_t ph, double value)
+void Slvs_SetParamValue(Slvs_Solver *solver, uint32_t ph, double value)
 {
+    WithCurrentSolver _ws(solver);
     Param* p = SK.param.FindById(hParam { ph });
     p->val = value;
 }
 
-void Slvs_SetConstraintValue(uint32_t ch, double value)
+void Slvs_SetConstraintValue(Slvs_Solver *solver, uint32_t ch, double value)
 {
+    WithCurrentSolver _ws(solver);
     ConstraintBase* c = SK.constraint.FindById(hConstraint { ch });
     c->valA = value;
     // Also update the constraint's parameter if it exists
@@ -1002,14 +1076,16 @@ void Slvs_SetConstraintValue(uint32_t ch, double value)
     }
 }
 
-double Slvs_GetConstraintValue(uint32_t ch)
+double Slvs_GetConstraintValue(Slvs_Solver *solver, uint32_t ch)
 {
+    WithCurrentSolver _ws(solver);
     ConstraintBase* c = SK.constraint.FindById(hConstraint { ch });
     return c->valA;
 }
 
-void Slvs_SetConstraintGroup(uint32_t ch, uint32_t new_group)
+void Slvs_SetConstraintGroup(Slvs_Solver *solver, uint32_t ch, uint32_t new_group)
 {
+    WithCurrentSolver _ws(solver);
     // Move a constraint to a different group. Used by clients (e.g.
     // pyactiongraph's spatial-affector layer) that want to enable/disable
     // individual constraints at runtime: park them in an unused group to
@@ -1022,14 +1098,16 @@ void Slvs_SetConstraintGroup(uint32_t ch, uint32_t new_group)
     c->group.v = new_group;
 }
 
-uint32_t Slvs_GetConstraintGroup(uint32_t ch)
+uint32_t Slvs_GetConstraintGroup(Slvs_Solver *solver, uint32_t ch)
 {
+    WithCurrentSolver _ws(solver);
     ConstraintBase* c = SK.constraint.FindById(hConstraint { ch });
     return c->group.v;
 }
 
-void Slvs_Solve(Slvs_System *ssys, uint32_t shg)
+void Slvs_Solve(Slvs_Solver *solver, Slvs_System *ssys, uint32_t shg)
 {
+    WithCurrentSolver _ws(solver);
     SYS.Clear();
     SK.param.Clear();
     SK.entity.Clear();
@@ -1162,6 +1240,43 @@ void Slvs_Solve(Slvs_System *ssys, uint32_t shg)
     SK.constraint.Clear();
 
     Platform::FreeAllTemporary();
+}
+
+// ---------- Multi-instance handle API (see slvs.h docs) ----------------------
+//
+// `Slvs_Solver` is exposed as an opaque struct; under the hood it's the
+// `SolveSpace::Solver` C++ class. The four functions below are thin
+// reinterpret_cast wrappers — Solver carries no extra state beyond what the
+// C++ class already encapsulates (sketch, system, dragged set, temp arena).
+//
+// `Slvs_SetCurrentSolver` writes the C++-side `thread_local CurrentSolver`
+// pointer. All other Slvs_* functions reach the per-solver state through
+// the SK / SYS macros in solver.h, which in turn read `CurrentSolver`. So
+// "selecting" a Solver for subsequent calls is a single pointer write.
+
+Slvs_Solver *Slvs_CreateSolver(void) {
+    return reinterpret_cast<Slvs_Solver *>(new SolveSpace::Solver());
+}
+
+void Slvs_DestroySolver(Slvs_Solver *handle) {
+    if(handle == nullptr) return;
+    auto *s = reinterpret_cast<SolveSpace::Solver *>(handle);
+    // If the destroyed solver is currently selected, unselect it — the
+    // next API call will lazy-allocate a fresh per-thread default. This
+    // matches the "don't use after free" expectation without leaving a
+    // dangling thread-local pointer.
+    if(SolveSpace::CurrentSolver == s) {
+        SolveSpace::CurrentSolver = nullptr;
+    }
+    delete s;
+}
+
+void Slvs_SetCurrentSolver(Slvs_Solver *handle) {
+    SolveSpace::CurrentSolver = reinterpret_cast<SolveSpace::Solver *>(handle);
+}
+
+Slvs_Solver *Slvs_GetCurrentSolver(void) {
+    return reinterpret_cast<Slvs_Solver *>(SolveSpace::CurrentSolver);
 }
 
 } /* extern "C" */

@@ -742,8 +742,16 @@ bool LinkIDF(const Platform::Path &filename, EntityList *le, SMesh *m, SShell *s
 bool LinkStl(const Platform::Path &filename, EntityList *le, SMesh *m, SShell *sh);
 
 extern SolveSpaceUI SS;
-extern Sketch SK;
+// `Sketch SK` is no longer a global — it lives inside the per-thread
+// `Solver` instance (see solver.h). Existing `SK.foo` call sites
+// continue to work through the macro defined there.
 
 } // namespace SolveSpace
+
+// Bring in the SK / SYS / dragged macros so existing source files
+// (constrainteq.cpp, entity.cpp, system.cpp, expr.cpp, util.cpp,
+// slvs/lib.cpp) that include solvespace.h pick up the new
+// thread-local-Solver routing transparently.
+#include "solver.h"
 
 #endif

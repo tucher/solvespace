@@ -560,6 +560,13 @@ public:
     void AddEq(IdList<Equation,hEquation> *l, Expr *expr, int index) const;
     void GenerateEquations(IdList<Equation,hEquation> *l) const;
 
+    // Back-pointer to the owning Sketch. Set by `Sketch::AddEntity`
+    // on insertion; null on stack temporaries before they're added.
+    // Methods that need to look up related entities/params (`point[i]`,
+    // `param[i]`, `workplane`, …) read through this pointer — replaces
+    // the legacy `SK` thread-local-routing macro.
+    Sketch     *sk = nullptr;
+
     void Clear() {}
 };
 
@@ -738,12 +745,23 @@ public:
     void ModifyToSatisfy();
     void AddEq(IdList<Equation,hEquation> *l, Expr *expr, int index) const;
     void AddEq(IdList<Equation,hEquation> *l, const ExprVector &v, int baseIndex = 0) const;
-    static Expr *DirectionCosine(hEntity wrkpl, ExprVector ae, ExprVector be);
-    static Expr *Distance(hEntity workplane, hEntity pa, hEntity pb);
-    static Expr *PointLineDistance(hEntity workplane, hEntity pt, hEntity ln);
-    static Expr *PointPlaneDistance(ExprVector p, hEntity plane);
+    // Pure-symbolic helpers — take the Sketch they look entities up in
+    // as an explicit first parameter. Called from `GenerateEquations`
+    // (where `this->sk` is the natural argument) and from a few entity
+    // methods (which pass their own sketch).
+    static Expr *DirectionCosine(const Sketch &sk, hEntity wrkpl,
+                                 ExprVector ae, ExprVector be);
+    static Expr *Distance(const Sketch &sk, hEntity workplane,
+                          hEntity pa, hEntity pb);
+    static Expr *PointLineDistance(const Sketch &sk, hEntity workplane,
+                                   hEntity pt, hEntity ln);
+    static Expr *PointPlaneDistance(const Sketch &sk, ExprVector p, hEntity plane);
+    static ExprVector PointInThreeSpace(const Sketch &sk, hEntity workplane,
+                                        Expr *u, Expr *v);
     static ExprVector VectorsParallel3d(ExprVector a, ExprVector b, hParam p);
-    static ExprVector PointInThreeSpace(hEntity workplane, Expr *u, Expr *v);
+
+    // Back-pointer; see `EntityBase::sk` above.
+    Sketch     *sk = nullptr;
 
     void Clear() {}
 };

@@ -17,6 +17,8 @@
 
 namespace SolveSpace {
 
+class Sketch;
+
 using SubstitutionMap = std::unordered_map<hParam, Param *, HandleHasher<hParam>>;
 
 class Expr {
@@ -78,7 +80,11 @@ public:
     inline Expr *ACos  () { return AnyOp(Op::ACOS,   NULL); }
 
     Expr *PartialWrt(hParam p) const;
-    double Eval() const;
+    // `sk` is consulted only when the expression tree still contains
+    // Op::PARAM nodes (handle-form). After `DeepCopyWithParamsAsPointers`
+    // substitutes those to Op::PARAM_PTR (direct double*), the hot Newton
+    // loop calls Eval() with sk=nullptr because no lookup is needed.
+    double Eval(const Sketch *sk = nullptr) const;
     void ParamsUsedList(ParamSet *list) const;
     bool DependsOn(hParam p) const;
     static bool Tol(double a, double b);
@@ -128,7 +134,7 @@ public:
     ExprVector WithMagnitude(Expr *s) const;
     Expr *Magnitude() const;
 
-    Vector Eval() const;
+    Vector Eval(const Sketch *sk = nullptr) const;
 };
 
 class ExprQuaternion {

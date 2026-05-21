@@ -470,11 +470,6 @@ typedef struct Slvs_Solver Slvs_Solver;
 
 DLL Slvs_Solver *Slvs_CreateSolver(void);
 DLL void         Slvs_DestroySolver(Slvs_Solver *solver);
-/* Internal: sets the per-thread "current" Solver. Normal callers pass the
- * Slvs_Solver* explicitly to every data-mutating function; the thread-local
- * is an implementation detail and is overwritten on entry to each call. */
-DLL void         Slvs_SetCurrentSolver(Slvs_Solver *solver);
-DLL Slvs_Solver *Slvs_GetCurrentSolver(void);
 
 DLL Slvs_Entity Slvs_AddPoint2D(Slvs_Solver *solver, uint32_t grouph, double u, double v, Slvs_Entity workplane);
 DLL Slvs_Entity Slvs_AddPoint3D(Slvs_Solver *solver, uint32_t grouph, double x, double y, double z);

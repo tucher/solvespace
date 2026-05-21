@@ -78,9 +78,16 @@ public:
     utf8_iterator end()   const { return utf8_iterator(&str[0] + str.length()); }
 };
 
+class Solver;
+
 class System {
 public:
     enum { MAX_UNKNOWNS = 2048 };
+
+    // Back-pointer to the owning Solver. Set in `Solver::Solver()`.
+    // Used by methods that need access to the sketch (sister field
+    // `Solver::sk`) — replaces the legacy `SK` macro / thread-local.
+    Solver                          *owner = nullptr;
 
     EntityList                      entity;
     ParamList                       param;
@@ -397,6 +404,10 @@ public:
 #endif
 class Sketch {
 public:
+    // Back-pointer to the owning Solver. Set in `Solver::Solver()`;
+    // null only for the rare stand-alone test sketch.
+    Solver                          *owner = nullptr;
+
     // These are user-editable, and define the sketch.
     IdList<Group,hGroup>            group;
     List<hGroup>                    groupOrder;
@@ -408,13 +419,52 @@ public:
     IdList<ENTITY,hEntity>          entity;
     ParamList                       param;
 
-    inline CONSTRAINT *GetConstraint(hConstraint h)
+    inline CONSTRAINT       *GetConstraint(hConstraint h)
         { return constraint.FindById(h); }
-    inline ENTITY  *GetEntity (hEntity  h) { return entity. FindById(h); }
-    inline Param   *GetParam  (hParam   h) { return param.  FindById(h); }
+    inline const CONSTRAINT *GetConstraint(hConstraint h) const
+        { return constraint.FindById(h); }
+    inline ENTITY       *GetEntity (hEntity h)       { return entity. FindById(h); }
+    inline const ENTITY *GetEntity (hEntity h) const { return entity. FindById(h); }
+    inline Param        *GetParam  (hParam  h)       { return param.  FindById(h); }
+    inline const Param  *GetParam  (hParam  h) const { return param.  FindById(h); }
     inline Request *GetRequest(hRequest h) { return request.FindById(h); }
     inline Group   *GetGroup  (hGroup   h) { return group.  FindById(h); }
     // Styles are handled a bit differently.
+
+    // Insertion helpers that set the `sk` back-pointer on the stored
+    // copy so subsequent in-method `this->sk->…` lookups find this
+    // sketch. Equivalent to `entity.AddAndAssignId(e)` followed by
+    // pointing the inserted element's `sk` here.
+    hEntity     AddEntity(ENTITY *e) {
+        hEntity h = entity.AddAndAssignId(e);
+        entity.FindById(h)->sk = this;
+        return h;
+    }
+    hConstraint AddConstraint(CONSTRAINT *c) {
+        hConstraint h = constraint.AddAndAssignId(c);
+        constraint.FindById(h)->sk = this;
+        return h;
+    }
+    hParam      AddParam(Param *p) {
+        hParam h = param.AddAndAssignId(p);
+        param.FindById(h)->sk = this;
+        return h;
+    }
+    // `Add` variants (handle pre-assigned). Used by `Slvs_Solve` which
+    // takes a caller-built param/entity/constraint stream with handles
+    // already set; the IdList just stores them in handle-order.
+    void        AddEntityKeepingHandle(ENTITY *e) {
+        entity.Add(e);
+        entity.FindById(e->h)->sk = this;
+    }
+    void        AddConstraintKeepingHandle(CONSTRAINT *c) {
+        constraint.Add(c);
+        constraint.FindById(c->h)->sk = this;
+    }
+    void        AddParamKeepingHandle(Param *p) {
+        param.Add(p);
+        param.FindById(p->h)->sk = this;
+    }
 
     void Clear();
 
@@ -742,16 +792,14 @@ bool LinkIDF(const Platform::Path &filename, EntityList *le, SMesh *m, SShell *s
 bool LinkStl(const Platform::Path &filename, EntityList *le, SMesh *m, SShell *sh);
 
 extern SolveSpaceUI SS;
-// `Sketch SK` is no longer a global — it lives inside the per-thread
-// `Solver` instance (see solver.h). Existing `SK.foo` call sites
-// continue to work through the macro defined there.
+// All per-sketch / per-solve state lives on a `Solver` instance (see
+// solver.h). Internal code reaches sketch/system via back-pointers on
+// EntityBase / ConstraintBase / Param / Sketch / System, or via the
+// explicit `Slvs_Solver *` passed into every public C-API entry point.
+// No thread-local for solver state.
 
 } // namespace SolveSpace
 
-// Bring in the SK / SYS / dragged macros so existing source files
-// (constrainteq.cpp, entity.cpp, system.cpp, expr.cpp, util.cpp,
-// slvs/lib.cpp) that include solvespace.h pick up the new
-// thread-local-Solver routing transparently.
 #include "solver.h"
 
 #endif

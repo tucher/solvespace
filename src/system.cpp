@@ -53,7 +53,7 @@ bool System::WriteJacobian(int tag) {
     for(size_t i = 0; i < mat.eq.size(); i++) {
         Equation *e = mat.eq[i];
         // Deep-copy and simplify (fold) the current equation.
-        Expr *f = e->e->DeepCopyWithParamsAsPointers(&param, &(SK.param), /*foldConstants=*/true);
+        Expr *f = e->e->DeepCopyWithParamsAsPointers(&param, &(owner->sk->param), /*foldConstants=*/true);
 
         ParamSet paramsUsed;
         f->ParamsUsedList(&paramsUsed);
@@ -357,7 +357,7 @@ bool System::NewtonSolve() {
 
 void System::WriteEquationsExceptFor(hConstraint hc, Group *g) {
     // Generate all the equations from constraints in this group
-    for(auto &con : SK.constraint) {
+    for(auto &con : owner->sk->constraint) {
         ConstraintBase *c = &con;
         if(c->group != g->h) continue;
         if(c->h == hc) continue;
@@ -380,7 +380,7 @@ void System::WriteEquationsExceptFor(hConstraint hc, Group *g) {
         c->GenerateEquations(&eq);
     }
     // And the equations from entities
-    for(auto &ent : SK.entity) {
+    for(auto &ent : owner->sk->entity) {
         EntityBase *e = &ent;
         if(e->group != g->h) continue;
 
@@ -396,7 +396,7 @@ void System::FindWhichToRemoveToFixJacobian(Group *g, List<hConstraint> *bad, bo
     int a;
 
     for(a = 0; a < 2; a++) {
-        for(auto &con : SK.constraint) {
+        for(auto &con : owner->sk->constraint) {
             if((GetMilliseconds() - time) > g->solved.findToFixTimeout) {
                 g->solved.timeout = true;
                 return;
@@ -522,7 +522,7 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
         auto it = subMap.find(p.h);
         double val = it == subMap.end() ? p.val : it->second->val;
 
-        Param *pp = SK.GetParam(p.h);
+        Param *pp = owner->sk->GetParam(p.h);
         pp->val = val;
         pp->known = true;
         pp->free  = p.free;
@@ -530,7 +530,7 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
     return rankOk ? SolveResult::OKAY : SolveResult::REDUNDANT_OKAY;
 
 didnt_converge:
-    SK.constraint.ClearTags();
+    owner->sk->constraint.ClearTags();
     // Not using range-for here because index is used in additional ways
     for(size_t i = 0; i < mat.eq.size(); i++) {
         if(fabs(mat.B.num[i]) > CONVERGE_TOLERANCE || IsReasonable(mat.B.num[i])) {
@@ -538,7 +538,7 @@ didnt_converge:
             if(!mat.eq[i]->h.isFromConstraint()) continue;
 
             hConstraint hc = mat.eq[i]->h.constraint();
-            ConstraintBase *c = SK.constraint.FindByIdNoOops(hc);
+            ConstraintBase *c = owner->sk->constraint.FindByIdNoOops(hc);
             if(!c) continue;
             // Don't double-show constraints that generated multiple
             // unsatisfied equations

@@ -11,9 +11,6 @@
 
 #include "util.h"
 #include "platform.h"
-// Pulls in the Solver type + EnsureCurrentSolver() used below by
-// AllocTemporary / FreeAllTemporary.
-#include "solvespace.h"
 
 namespace SolveSpace {
 namespace Platform {
@@ -75,29 +72,47 @@ void DebugPrint(const char *fmt, ...) {
 //-----------------------------------------------------------------------------
 // Temporary arena.
 //
-// The per-solve scratch heap used by AllocExpr() (see expr.cpp) lives
-// inside the current `Solver` (see solver.h). One heap per Solver
-// instance — single-threaded callers see the same lazy thread-local
-// behaviour as before; the handle-based API (Phase 0.5+) lets a single
-// thread juggle several Solvers, each with its own heap.
+// Per-thread scratch heap used by `AllocExpr()` (see expr.cpp). It's a
+// workspace, not state — every solve allocates a fan of Expr nodes,
+// runs Newton's method, and the caller (the `Slvs_*` C API) issues
+// `FreeAllTemporary` at the end of the solve. Threads never share an
+// arena because the heap pointer is `thread_local`. There is no
+// dependency on which Solver is being driven: two Solvers running
+// on the same thread (in sequence) reuse the same arena, freed
+// between solves; two Solvers running on different threads each
+// get their own.
+//
+// Lifetime: lazy-allocated on first `AllocTemporary`, destroyed at
+// thread exit via the `Arena` RAII helper below. `FreeAllTemporary`
+// also tears it down explicitly mid-solve when the caller chooses.
 //-----------------------------------------------------------------------------
 
-void *AllocTemporary(size_t size) {
-    Solver &s = EnsureCurrentSolver();
-    if(s.temp_heap == nullptr) {
-        s.temp_heap = mi_heap_new();
-        ssassert(s.temp_heap != nullptr, "out of memory");
+namespace {
+struct Arena {
+    mi_heap_t *heap = nullptr;
+    ~Arena() {
+        if(heap != nullptr) {
+            mi_heap_destroy(heap);
+        }
     }
-    void *ptr = mi_heap_zalloc(s.temp_heap, size);
+};
+thread_local Arena arena;
+}  // namespace
+
+void *AllocTemporary(size_t size) {
+    if(arena.heap == nullptr) {
+        arena.heap = mi_heap_new();
+        ssassert(arena.heap != nullptr, "out of memory");
+    }
+    void *ptr = mi_heap_zalloc(arena.heap, size);
     ssassert(ptr != nullptr, "out of memory");
     return ptr;
 }
 
 void FreeAllTemporary() {
-    Solver &s = EnsureCurrentSolver();
-    if(s.temp_heap != nullptr) {
-        mi_heap_destroy(s.temp_heap);
-        s.temp_heap = nullptr;
+    if(arena.heap != nullptr) {
+        mi_heap_destroy(arena.heap);
+        arena.heap = nullptr;
     }
 }
 

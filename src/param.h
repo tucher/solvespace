@@ -9,6 +9,7 @@
 namespace SolveSpace {
 
 class hRequest;
+class Sketch;
 
 class hParam {
 public:
@@ -33,6 +34,12 @@ public:
 
     // Used only in the solver
     Param       *substd;
+
+    // Back-pointer to the Sketch this Param lives in. Set by
+    // `Sketch::AddParam` on insertion; nullptr for stack-temporaries
+    // (which never look up other entities/params). Replaces the
+    // legacy `SK` macro for in-method sketch access.
+    Sketch      *sk = nullptr;
 
     static const hParam NO_PARAM;
 

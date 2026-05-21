@@ -23,6 +23,7 @@ class Vector4;
 class Point2d;
 class hEntity;
 class hParam;
+class Sketch;
 
 class Quaternion {
 public:
@@ -32,7 +33,7 @@ public:
     static const Quaternion IDENTITY;
 
     static Quaternion From(double w, double vx, double vy, double vz);
-    static Quaternion From(hParam w, hParam vx, hParam vy, hParam vz);
+    static Quaternion From(const Sketch &sk, hParam w, hParam vx, hParam vy, hParam vz);
     static Quaternion From(Vector u, Vector v);
     static Quaternion From(Vector axis, double dtheta);
 
@@ -60,7 +61,7 @@ public:
     double x, y, z;
 
     static Vector From(double x, double y, double z);
-    static Vector From(hParam x, hParam y, hParam z);
+    static Vector From(const Sketch &sk, hParam x, hParam y, hParam z);
     static Vector AtIntersectionOfPlanes(Vector n1, double d1,
                                          Vector n2, double d2);
     static Vector AtIntersectionOfLines(Vector a0, Vector a1,
@@ -99,8 +100,8 @@ public:
     double MagSquared() const;
     Vector WithMagnitude(double s) const;
     Vector ScaledBy(double s) const;
-    Vector ProjectInto(hEntity wrkpl) const;
-    Vector ProjectVectorInto(hEntity wrkpl) const;
+    Vector ProjectInto(const Sketch &sk, hEntity wrkpl) const;
+    Vector ProjectVectorInto(const Sketch &sk, hEntity wrkpl) const;
     double DivProjected(Vector delta) const;
     Vector ClosestOrtho() const;
     void MakeMaxMin(Vector *maxv, Vector *minv) const;
@@ -506,8 +507,17 @@ public:
         ssassert(t != nullptr, "Cannot find handle");
         return t;
     }
+    const T *FindById(H h) const {
+        const T *t = FindByIdNoOops(h);
+        ssassert(t != nullptr, "Cannot find handle");
+        return t;
+    }
 
     T *FindByIdNoOops(H h) {
+        return const_cast<T *>(
+            static_cast<const IdList *>(this)->FindByIdNoOops(h));
+    }
+    const T *FindByIdNoOops(H h) const {
         if(IsEmpty()) {
             return nullptr;
         }

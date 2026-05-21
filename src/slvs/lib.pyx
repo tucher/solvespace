@@ -56,8 +56,6 @@ cdef extern from "slvs.h" nogil:
         pass
     Slvs_Solver *Slvs_CreateSolver()
     void         Slvs_DestroySolver(Slvs_Solver *solver)
-    void         Slvs_SetCurrentSolver(Slvs_Solver *solver)
-    Slvs_Solver *Slvs_GetCurrentSolver()
 
     Slvs_Entity Slvs_AddPoint2D(Slvs_Solver *solver, Slvs_hGroup grouph, double u, double v, Slvs_Entity workplane)
     Slvs_Entity Slvs_AddPoint3D(Slvs_Solver *solver, Slvs_hGroup grouph, double x, double y, double z)

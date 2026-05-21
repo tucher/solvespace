@@ -96,11 +96,11 @@ Expr *ExprVector::Magnitude() const {
     return r->Sqrt();
 }
 
-Vector ExprVector::Eval() const {
+Vector ExprVector::Eval(const Sketch *sk) const {
     Vector r;
-    r.x = x->Eval();
-    r.y = y->Eval();
-    r.z = z->Eval();
+    r.x = x->Eval(sk);
+    r.y = y->Eval(sk);
+    r.z = z->Eval(sk);
     return r;
 }
 
@@ -347,26 +347,31 @@ Expr *Expr::DeepCopyWithParamsAsPointers(ParamList *firstTry, ParamList *thenTry
     return n;
 }
 
-double Expr::Eval() const {
+double Expr::Eval(const Sketch *sk) const {
     switch(op) {
-        case Op::PARAM:         return SK.GetParam(parh)->val;
+        case Op::PARAM:
+            ssassert(sk != nullptr,
+                "Eval'ing an Op::PARAM tree requires a Sketch* (substitute "
+                "to Op::PARAM_PTR via DeepCopyWithParamsAsPointers first, "
+                "or pass the sketch explicitly).");
+            return sk->param.FindById(parh)->val;
         case Op::PARAM_PTR:     return parp->val;
 
         case Op::CONSTANT:      return v;
         case Op::VARIABLE:      ssassert(false, "Not supported yet");
 
-        case Op::PLUS:          return a->Eval() + b->Eval();
-        case Op::MINUS:         return a->Eval() - b->Eval();
-        case Op::TIMES:         return a->Eval() * b->Eval();
-        case Op::DIV:           return a->Eval() / b->Eval();
+        case Op::PLUS:          return a->Eval(sk) + b->Eval(sk);
+        case Op::MINUS:         return a->Eval(sk) - b->Eval(sk);
+        case Op::TIMES:         return a->Eval(sk) * b->Eval(sk);
+        case Op::DIV:           return a->Eval(sk) / b->Eval(sk);
 
-        case Op::NEGATE:        return -(a->Eval());
-        case Op::SQRT:          return sqrt(a->Eval());
-        case Op::SQUARE:        { double r = a->Eval(); return r*r; }
-        case Op::SIN:           return sin(a->Eval());
-        case Op::COS:           return cos(a->Eval());
-        case Op::ACOS:          return acos(a->Eval());
-        case Op::ASIN:          return asin(a->Eval());
+        case Op::NEGATE:        return -(a->Eval(sk));
+        case Op::SQRT:          return sqrt(a->Eval(sk));
+        case Op::SQUARE:        { double r = a->Eval(sk); return r*r; }
+        case Op::SIN:           return sin(a->Eval(sk));
+        case Op::COS:           return cos(a->Eval(sk));
+        case Op::ACOS:          return acos(a->Eval(sk));
+        case Op::ASIN:          return asin(a->Eval(sk));
     }
     ssassert(false, "Unexpected operation");
 }

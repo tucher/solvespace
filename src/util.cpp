@@ -258,12 +258,12 @@ Quaternion Quaternion::From(double w, double vx, double vy, double vz) {
     return q;
 }
 
-Quaternion Quaternion::From(hParam w, hParam vx, hParam vy, hParam vz) {
+Quaternion Quaternion::From(const Sketch &sk, hParam w, hParam vx, hParam vy, hParam vz) {
     Quaternion q;
-    q.w  = SK.GetParam(w )->val;
-    q.vx = SK.GetParam(vx)->val;
-    q.vy = SK.GetParam(vy)->val;
-    q.vz = SK.GetParam(vz)->val;
+    q.w  = sk.param.FindById(w )->val;
+    q.vx = sk.param.FindById(vx)->val;
+    q.vy = sk.param.FindById(vy)->val;
+    q.vz = sk.param.FindById(vz)->val;
     return q;
 }
 
@@ -435,11 +435,11 @@ Quaternion Quaternion::Mirror() const {
 }
 
 
-Vector Vector::From(hParam x, hParam y, hParam z) {
+Vector Vector::From(const Sketch &sk, hParam x, hParam y, hParam z) {
     Vector v;
-    v.x = SK.GetParam(x)->val;
-    v.y = SK.GetParam(y)->val;
-    v.z = SK.GetParam(z)->val;
+    v.x = sk.param.FindById(x)->val;
+    v.y = sk.param.FindById(y)->val;
+    v.z = sk.param.FindById(z)->val;
     return v;
 }
 
@@ -599,8 +599,8 @@ Vector Vector::WithMagnitude(double v) const {
     }
 }
 
-Vector Vector::ProjectVectorInto(hEntity wrkpl) const {
-    EntityBase *w = SK.GetEntity(wrkpl);
+Vector Vector::ProjectVectorInto(const Sketch &sk, hEntity wrkpl) const {
+    const EntityBase *w = sk.entity.FindById(wrkpl);
     Vector u = w->Normal()->NormalU();
     Vector v = w->Normal()->NormalV();
 
@@ -610,13 +610,13 @@ Vector Vector::ProjectVectorInto(hEntity wrkpl) const {
     return (u.ScaledBy(up)).Plus(v.ScaledBy(vp));
 }
 
-Vector Vector::ProjectInto(hEntity wrkpl) const {
-    EntityBase *w = SK.GetEntity(wrkpl);
+Vector Vector::ProjectInto(const Sketch &sk, hEntity wrkpl) const {
+    const EntityBase *w = sk.entity.FindById(wrkpl);
     Vector p0 = w->WorkplaneGetOffset();
 
     Vector f = this->Minus(p0);
 
-    return p0.Plus(f.ProjectVectorInto(wrkpl));
+    return p0.Plus(f.ProjectVectorInto(sk, wrkpl));
 }
 
 Point2d Vector::Project2d(Vector u, Vector v) const {

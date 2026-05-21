@@ -258,14 +258,46 @@ bool System::TestRank(int *dof, int *rank) {
     return jacobianRank == mat.m;
 }
 
+// pImpl for the analyzePattern cache. One SparseQR instance per
+// `System`; we call `analyzePattern` on the first solve of a given
+// matrix-pattern epoch and `factorize` only on subsequent ones.
+//
+// Why this is sound: Eigen's `analyzePattern` consumes only the
+// sparsity pattern (row/col positions of non-zeros) of the matrix,
+// not its numeric values. Within a single `System::NewtonSolve` call
+// the pattern of `AAt = mat.A.num * mat.A.num.transpose()` is fixed
+// — the Jacobian's structure is determined by which equations and
+// parameters carry the current iteration's tag, not by their values.
+// Newton iterations change values; they don't add/remove rows or
+// columns. So one analyzePattern at the start of a NewtonSolve
+// covers every subsequent iteration in the same call.
+//
+// Invalidation: `analyzePattern_done` is reset to `false` at the
+// entry of every `NewtonSolve` (since the tagged subset changes
+// between the "alone" early-out and the big-system pass). The
+// cache object itself persists for the System lifetime; we just
+// re-analyze when needed. This is Phase 1.3 of the performance plan
+// — Phase 2 (Project A) extends this to a tape-level cache that
+// survives across solves.
+struct System::LinearSolverCache {
+    Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>> qr;
+    bool analyzePattern_done = false;
+};
+
 bool System::SolveLinearSystem(const Eigen::SparseMatrix <double> &A,
                                const Eigen::VectorXd &B, Eigen::VectorXd *X)
 {
     if(A.outerSize() == 0) return true;
     using namespace Eigen;
-    SparseQR<SparseMatrix<double>, COLAMDOrdering<int>> solver;
-    //SimplicialLDLT<SparseMatrix<double>> solver;
-    solver.compute(A);
+    if(linear_solver_cache == nullptr) {
+        linear_solver_cache = new LinearSolverCache();
+    }
+    auto &solver = linear_solver_cache->qr;
+    if(!linear_solver_cache->analyzePattern_done) {
+        solver.analyzePattern(A);
+        linear_solver_cache->analyzePattern_done = true;
+    }
+    solver.factorize(A);
     *X = solver.solve(B);
     return (solver.info() == Success);
 }
@@ -291,7 +323,11 @@ bool System::SolveLeastSquares() {
         }
     }
 
-    SparseMatrix<double> AAt = mat.A.num * mat.A.num.transpose();
+    // Build the normal-equations matrix into the persistent member
+    // `AAt` (not a stack local!) so the SparseQR pattern cache in
+    // `SolveLinearSystem` can hold references into its storage
+    // across Newton iterations without dangling.
+    AAt = mat.A.num * mat.A.num.transpose();
     AAt.makeCompressed();
     VectorXd z(mat.n);
 
@@ -306,6 +342,16 @@ bool System::SolveLeastSquares() {
 }
 
 bool System::NewtonSolve() {
+    // The tagged subset of equations / parameters changes between
+    // calls to NewtonSolve (System::Solve walks "alone" equations
+    // first, then the big leftover system) — each NewtonSolve runs
+    // on a different submatrix pattern. Invalidate the SparseQR
+    // pattern cache so the first SolveLinearSystem call this round
+    // re-analyzes; subsequent iterations within this NewtonSolve
+    // reuse it.
+    if(linear_solver_cache != nullptr) {
+        linear_solver_cache->analyzePattern_done = false;
+    }
 
     int iter = 0;
     bool converged = false;
@@ -329,6 +375,7 @@ bool System::NewtonSolve() {
             p->val -= mat.X[i];
             if(IsReasonable(p->val)) {
                 // Very bad, and clearly not convergent
+                last_newton_iterations = iter + 1;
                 return false;
             }
         }
@@ -338,10 +385,11 @@ bool System::NewtonSolve() {
             mat.B.num[i] = (mat.B.sym[i])->Eval();
             if(IsReasonable(mat.B.num[i])) {
                 // Very bad, and clearly not convergent
+                last_newton_iterations = iter + 1;
                 return false;
             }
         }
-        
+
         // Check for convergence
         converged = true;
         for(i = 0; i < mat.m; i++) {
@@ -352,6 +400,7 @@ bool System::NewtonSolve() {
         }
     } while(iter++ < 50 && !converged);
 
+    last_newton_iterations = iter;
     return converged;
 }
 
@@ -587,6 +636,16 @@ void System::Clear() {
     dragged.clear();
     mat.A.num.setZero();
     mat.A.sym.setZero();
+    // Drop the SparseQR analyzePattern cache — the next solve will
+    // operate on a different (possibly differently-shaped) system.
+    delete linear_solver_cache;
+    linear_solver_cache = nullptr;
+}
+
+// Defined here, where `LinearSolverCache` is a complete type, so
+// `delete` on the pImpl pointer compiles.
+System::~System() {
+    delete linear_solver_cache;
 }
 
 void System::MarkParamsFree(bool find) {

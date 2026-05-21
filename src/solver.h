@@ -45,6 +45,18 @@ public:
     System    *sys     = nullptr;
     ParamSet  *dragged = nullptr;
 
+    // When true, `Slvs_SolveSketch` skips the post-solve rank test
+    // (which costs ~13% wall-clock on a typical delta-style sketch).
+    // Trade-off: the solver returns `OKAY` instead of `REDUNDANT_OKAY`
+    // for over-constrained-but-consistent systems, and `dof` is not
+    // reported. The numeric solution is identical either way.
+    //
+    // pyactiongraphsim's planner validates topology at build time so
+    // redundancy is impossible by construction; the engine sets this
+    // to `true` after `engine.build()`. Default false for callers
+    // that need the diagnostic.
+    bool      suppress_rank_test = false;
+
     Solver();
     ~Solver();
 

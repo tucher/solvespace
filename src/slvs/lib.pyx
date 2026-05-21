@@ -56,6 +56,7 @@ cdef extern from "slvs.h" nogil:
         pass
     Slvs_Solver *Slvs_CreateSolver()
     void         Slvs_DestroySolver(Slvs_Solver *solver)
+    void         Slvs_SetSuppressRankTest(Slvs_Solver *solver, int suppress)
 
     Slvs_Entity Slvs_AddPoint2D(Slvs_Solver *solver, Slvs_hGroup grouph, double u, double v, Slvs_Entity workplane)
     Slvs_Entity Slvs_AddPoint3D(Slvs_Solver *solver, Slvs_hGroup grouph, double x, double y, double z)
@@ -280,6 +281,18 @@ cdef class Solver:
         if self.handle is not NULL:
             Slvs_DestroySolver(self.handle)
             self.handle = NULL
+
+    def set_suppress_rank_test(self, suppress: bool) -> None:
+        """Skip the post-solve rank test (`System::TestRank`) on every
+        subsequent `solve_sketch` call. Saves ~13% wall-clock on a
+        typical delta-style sketch; loses the `REDUNDANT_OKAY` /
+        `dof` diagnostics.
+
+        Safe for callers (like pyactiongraphsim's plan-based engine)
+        that validate topology at build time so over-constraint can
+        only come from a bug, not from user input.
+        """
+        Slvs_SetSuppressRankTest(self.handle, 1 if suppress else 0)
 
     # ---------- entities ----------
     def add_point_2d(self, grouph: int, u: float, v: float, workplane: Slvs_Entity) -> Slvs_Entity:

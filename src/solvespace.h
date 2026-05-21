@@ -134,8 +134,10 @@ public:
     static const double CONVERGE_TOLERANCE;
     int CalculateRank();
     bool TestRank(int *dof = NULL, int *rank = NULL);
-    static bool SolveLinearSystem(const Eigen::SparseMatrix<double> &A,
-                                  const Eigen::VectorXd &B, Eigen::VectorXd *X);
+    // Non-static now — uses `linear_solver_cache` to skip Eigen's
+    // `analyzePattern` on Newton iterations after the first.
+    bool SolveLinearSystem(const Eigen::SparseMatrix<double> &A,
+                           const Eigen::VectorXd &B, Eigen::VectorXd *X);
     bool SolveLeastSquares();
 
     bool WriteJacobian(int tag);
@@ -147,6 +149,38 @@ public:
     SubstitutionMap SolveBySubstitution();
 
     bool IsDragged(hParam p);
+
+    // Newton iteration count for the most recent `NewtonSolve` call —
+    // exposed for the `SLVS_NEWTON_STATS` env-var path in slvs/lib.cpp
+    // (each successful `Slvs_SolveSketch` appends one count to a
+    // running histogram). Convergence in 1-2 iterations is the modal
+    // case for steady-state tick loops; high counts indicate poor
+    // warm-start or a near-singular Jacobian.
+    int last_newton_iterations = 0;
+
+    // Persistent storage for the normal-equations matrix
+    // `AAt = mat.A.num * mat.A.num.transpose()` that `SolveLeastSquares`
+    // hands to `SolveLinearSystem`. Held on the System (not as a
+    // stack local) because `SparseQR::analyzePattern` retains
+    // references into the analyzed matrix's index storage — the
+    // cache below would dangle if AAt were rebuilt fresh each call.
+    Eigen::SparseMatrix<double> AAt;
+
+    // pImpl for the SparseQR linear-solver cache. The cached object
+    // holds an `Eigen::SparseQR<…>` whose `analyzePattern` we reuse
+    // across the multiple Newton iterations of a single solve (the
+    // matrix's sparsity pattern is constant within a solve; only the
+    // numeric entries change). Forward-declared so `solvespace.h`
+    // doesn't have to include the very heavy `<Eigen/SparseQR>`;
+    // defined in `system.cpp`. The explicit destructor below is
+    // defined out-of-line in system.cpp where the pImpl type is
+    // complete (the implicit one would not see it through the
+    // forward declaration).
+    struct LinearSolverCache;
+    LinearSolverCache *linear_solver_cache = nullptr;
+
+    System() = default;
+    ~System();
 
     bool NewtonSolve();
 

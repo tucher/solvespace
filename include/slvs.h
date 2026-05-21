@@ -471,6 +471,20 @@ typedef struct Slvs_Solver Slvs_Solver;
 DLL Slvs_Solver *Slvs_CreateSolver(void);
 DLL void         Slvs_DestroySolver(Slvs_Solver *solver);
 
+/*
+ * When set, `Slvs_SolveSketch` skips the post-solve rank test
+ * (`System::TestRank`), saving ~13% wall-clock on a typical delta-style
+ * sketch. The trade-off: the solver returns `SLVS_RESULT_OKAY` for
+ * over-constrained-but-consistent systems instead of distinguishing
+ * `SLVS_RESULT_REDUNDANT_OKAY`, and the `dof` field on `Slvs_SolveResult`
+ * is not populated.
+ *
+ * Safe to use when the upstream model is validated at build time and
+ * "if it converges, it's correct" is acceptable — which is the case
+ * for pyactiongraphsim's plan-based engine. Defaults to disabled.
+ */
+DLL void         Slvs_SetSuppressRankTest(Slvs_Solver *solver, int suppress);
+
 DLL Slvs_Entity Slvs_AddPoint2D(Slvs_Solver *solver, uint32_t grouph, double u, double v, Slvs_Entity workplane);
 DLL Slvs_Entity Slvs_AddPoint3D(Slvs_Solver *solver, uint32_t grouph, double x, double y, double z);
 DLL Slvs_Entity Slvs_AddNormal2D(Slvs_Solver *solver, uint32_t grouph, Slvs_Entity workplane);

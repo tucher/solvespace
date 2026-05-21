@@ -5,6 +5,8 @@
 // Copyright 2008-2013 Jonathan Westhues.
 //-----------------------------------------------------------------------------
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include "solvespace.h"
 #include <slvs.h>
 #include <string>
@@ -43,6 +45,88 @@ namespace {
 // local, no more SK/SYS macros).
 static inline SolveSpace::Solver *as_solver(Slvs_Solver *handle) {
     return reinterpret_cast<SolveSpace::Solver *>(handle);
+}
+
+// ── Newton iteration histogram (env-var: SLVS_NEWTON_STATS=1) ──
+//
+// Enabled lazily on the first `Slvs_SolveSketch` call after process
+// start — checks the env var once, latches the result, and from then
+// on accumulates per-solve iteration counts into a small fixed-size
+// histogram. An `atexit` handler prints the histogram to stderr on
+// process termination. Modal iteration count is the headline number:
+// 1-2 is typical for steady-state tick loops; high tails indicate
+// poor warm-start or a near-singular Jacobian.
+//
+// Race-handling: counters incremented without a lock. Sample loss
+// under contention is acceptable for instrumentation purposes; the
+// histogram is a debugging aid, not telemetry.
+struct NewtonStats {
+    // Iteration counts cap at 50 by `NewtonSolve`; +1 slot for the
+    // "failed before completing iteration 0" case (count = 0).
+    static constexpr int MAX_BUCKET = 51;
+    std::atomic<uint64_t> bucket[MAX_BUCKET]{};
+    std::atomic<uint64_t> total_solves{0};
+    std::atomic<uint64_t> failed_solves{0};
+    bool enabled = false;
+    bool initialized = false;
+};
+static NewtonStats g_newton_stats;
+
+static void Slvs_PrintNewtonStats() {
+    if(!g_newton_stats.enabled) return;
+    uint64_t total = g_newton_stats.total_solves.load();
+    if(total == 0) return;
+    fprintf(stderr, "\n--- slvs Newton iteration histogram ---\n");
+    fprintf(stderr, "total solves: %llu (failed: %llu)\n",
+            (unsigned long long)total,
+            (unsigned long long)g_newton_stats.failed_solves.load());
+    uint64_t cum = 0;
+    int modal_bucket = 0;
+    uint64_t modal_count = 0;
+    for(int i = 0; i < NewtonStats::MAX_BUCKET; i++) {
+        uint64_t n = g_newton_stats.bucket[i].load();
+        if(n > modal_count) {
+            modal_count = n;
+            modal_bucket = i;
+        }
+        cum += n;
+    }
+    for(int i = 0; i < NewtonStats::MAX_BUCKET; i++) {
+        uint64_t n = g_newton_stats.bucket[i].load();
+        if(n == 0) continue;
+        double pct = 100.0 * n / static_cast<double>(total);
+        // Compact bar chart.
+        int bar = static_cast<int>(pct / 2.0 + 0.5);
+        if(bar > 40) bar = 40;
+        fprintf(stderr, "  %2d iters: %8llu  %5.1f%%  %.*s\n", i,
+                (unsigned long long)n, pct, bar,
+                "########################################");
+    }
+    fprintf(stderr, "modal: %d iters (%.1f%%)\n", modal_bucket,
+            100.0 * modal_count / static_cast<double>(total));
+}
+
+static inline void Slvs_RecordNewtonStats(int iter, bool converged) {
+    if(!g_newton_stats.initialized) {
+        // First-touch init. Multi-thread races are harmless — getenv
+        // is idempotent and atexit is idempotent within a single
+        // process; both flags converge to the same value.
+        const char *e = getenv("SLVS_NEWTON_STATS");
+        g_newton_stats.enabled = (e != nullptr && e[0] != '\0' && e[0] != '0');
+        if(g_newton_stats.enabled) {
+            std::atexit(&Slvs_PrintNewtonStats);
+        }
+        g_newton_stats.initialized = true;
+    }
+    if(!g_newton_stats.enabled) return;
+    int bucket = iter;
+    if(bucket < 0) bucket = 0;
+    if(bucket >= NewtonStats::MAX_BUCKET) bucket = NewtonStats::MAX_BUCKET - 1;
+    g_newton_stats.bucket[bucket].fetch_add(1, std::memory_order_relaxed);
+    g_newton_stats.total_solves.fetch_add(1, std::memory_order_relaxed);
+    if(!converged) {
+        g_newton_stats.failed_solves.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 }  // namespace
 
@@ -921,6 +1005,9 @@ Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t shg, Slvs_hConst
 
     Group g = {};
     g.h.v = shg;
+    // Propagate the per-Solver flag: skip the post-solve rank test
+    // when the caller has opted in. See `Slvs_SetSuppressRankTest`.
+    g.suppressDofCalculation = solver_cpp->suppress_rank_test;
 
     // add params from entities on sketch
     for(EntityBase &ent : solver_cpp->sk->entity) {
@@ -1004,6 +1091,9 @@ Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t shg, Slvs_hConst
 
     int dof = 0;
     SolveResult status = solver_cpp->sys->Solve(&g, &dof, &badList, andFindBad, false, false);
+    Slvs_RecordNewtonStats(
+        solver_cpp->sys->last_newton_iterations,
+        status == SolveResult::OKAY || status == SolveResult::REDUNDANT_OKAY);
     Slvs_SolveResult sr = {};
     sr.dof = dof;
     sr.nbad = badList.n;
@@ -1243,6 +1333,10 @@ Slvs_Solver *Slvs_CreateSolver(void) {
 void Slvs_DestroySolver(Slvs_Solver *handle) {
     if(handle == nullptr) return;
     delete reinterpret_cast<SolveSpace::Solver *>(handle);
+}
+
+void Slvs_SetSuppressRankTest(Slvs_Solver *handle, int suppress) {
+    as_solver(handle)->suppress_rank_test = (suppress != 0);
 }
 
 } /* extern "C" */

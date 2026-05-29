@@ -145,6 +145,7 @@ cdef extern from "slvs.h" nogil:
     cdef int _SLVS_C_ARC_LINE_LEN_RATIO "SLVS_C_ARC_LINE_LEN_RATIO"
     cdef int _SLVS_C_ARC_ARC_DIFFERENCE "SLVS_C_ARC_ARC_DIFFERENCE"
     cdef int _SLVS_C_ARC_LINE_DIFFERENCE "SLVS_C_ARC_LINE_DIFFERENCE"
+    cdef int _SLVS_C_SIGNED_ANGLE "SLVS_C_SIGNED_ANGLE"
 
     cdef int _SLVS_E_POINT_IN_3D "SLVS_E_POINT_IN_3D"
     cdef int _SLVS_E_POINT_IN_2D "SLVS_E_POINT_IN_2D"
@@ -246,6 +247,7 @@ class ConstraintType(IntEnum):
     ARC_LINE_LEN_RATIO = _SLVS_C_ARC_LINE_LEN_RATIO
     ARC_ARC_DIFFERENCE = _SLVS_C_ARC_ARC_DIFFERENCE
     ARC_LINE_DIFFERENCE = _SLVS_C_ARC_LINE_DIFFERENCE
+    SIGNED_ANGLE = _SLVS_C_SIGNED_ANGLE
 
 
 class EntityType(IntEnum):
@@ -389,6 +391,19 @@ cdef class Solver:
 
     def angle(self, grouph: int, entityA: Slvs_Entity, entityB: Slvs_Entity, value: float, workplane: Slvs_Entity = E_FREE_IN_3D, inverse: bool = False) -> Slvs_Constraint:
         return Slvs_Angle(self.handle, grouph, entityA, entityB, value, workplane, inverse)
+
+    def signed_angle(self, grouph: int, axis_normal: Slvs_Entity, world_ref: Slvs_Entity, body_ref: Slvs_Entity, value: float) -> Slvs_Constraint:
+        """Signed-angle (radians) constraint around ``axis_normal``: pins the
+        signed rotation from ``world_ref`` to ``body_ref`` measured around
+        ``axis_normal`` to ``value``. Residual is monotonic over the full
+        (-pi, +pi] basin around any target; ``value`` may be any real number
+        (sin/cos of it are evaluated natively, so 2-pi-periodic input is fine).
+        Inherently 3D — no workplane argument.
+        """
+        return Slvs_AddConstraint(
+            self.handle, grouph, _SLVS_C_SIGNED_ANGLE, E_FREE_IN_3D, value,
+            E_NONE, E_NONE, axis_normal, world_ref, body_ref, E_NONE, 0, 0,
+        )
 
     def perpendicular(self, grouph: int, entityA: Slvs_Entity, entityB: Slvs_Entity, workplane: Slvs_Entity = E_FREE_IN_3D, inverse: bool = False) -> Slvs_Constraint:
         return Slvs_Perpendicular(self.handle, grouph, entityA, entityB, workplane, inverse)

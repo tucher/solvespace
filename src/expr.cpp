@@ -298,6 +298,7 @@ int Expr::Children() const {
         case Op::MINUS:
         case Op::TIMES:
         case Op::DIV:
+        case Op::ATAN2:
             return 2;
 
         case Op::NEGATE:
@@ -400,6 +401,7 @@ double Expr::Eval(const Sketch *sk) const {
         case Op::COS:           return cos(a->Eval(sk));
         case Op::ACOS:          return acos(a->Eval(sk));
         case Op::ASIN:          return asin(a->Eval(sk));
+        case Op::ATAN2:         return atan2(a->Eval(sk), b->Eval(sk));
     }
     ssassert(false, "Unexpected operation");
 }
@@ -444,6 +446,15 @@ Expr *Expr::PartialWrt(hParam p) const {
         case Op::ACOS:
             return (From(-1)->Div((From(1)->Minus(a->Square()))->Sqrt()))
                         ->Times(a->PartialWrt(p));
+
+        case Op::ATAN2:
+            // d/dp[atan2(a, b)] = (b·a' - a·b') / (a^2 + b^2)
+            // Well-defined except at a = b = 0, which doesn't occur for
+            // any geometrically valid signed-angle residual (sin^2+cos^2 = 1).
+            da = a->PartialWrt(p);
+            db = b->PartialWrt(p);
+            return ((b->Times(da))->Minus(a->Times(db)))
+                        ->Div((a->Square())->Plus(b->Square()));
     }
     ssassert(false, "Unexpected operation");
 }
@@ -503,11 +514,12 @@ Expr *Expr::FoldConstants(bool allocCopy, size_t depth) {
         case Op::TIMES:
         case Op::DIV:
         case Op::PLUS:
+        case Op::ATAN2:
             if(depth > 0) {
                 n->a = a->FoldConstants(allocCopy, depth - 1);
                 n->b = b->FoldConstants(allocCopy, depth - 1);
             }
-    
+
             // If both ops are known, then we can evaluate immediately
             if(n->a->op == Op::CONSTANT && n->b->op == Op::CONSTANT) {
                 double nv = n->Eval();
@@ -645,6 +657,7 @@ p:
         case Op::COS:       return "(cos " + a->Print() + ")";
         case Op::ASIN:      return "(asin " + a->Print() + ")";
         case Op::ACOS:      return "(acos " + a->Print() + ")";
+        case Op::ATAN2:     return "(atan2 " + a->Print() + " " + b->Print() + ")";
     }
     ssassert(false, "Unexpected operation");
 }

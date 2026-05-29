@@ -40,6 +40,7 @@ std::string Constraint::DescriptionString() const {
         case Type::PT_ON_CIRCLE:        s = C_("constr-name", "pt-on-circle"); break;
         case Type::SAME_ORIENTATION:    s = C_("constr-name", "same-orientation"); break;
         case Type::ANGLE:               s = C_("constr-name", "angle"); break;
+        case Type::SIGNED_ANGLE:        s = C_("constr-name", "signed-angle"); break;
         case Type::PARALLEL:            s = C_("constr-name", "parallel"); break;
         case Type::ARC_LINE_TANGENT:    s = C_("constr-name", "arc-line-tangent"); break;
         case Type::CUBIC_LINE_TANGENT:  s = C_("constr-name", "cubic-line-tangent"); break;

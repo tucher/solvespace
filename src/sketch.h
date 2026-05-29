@@ -693,6 +693,14 @@ public:
         ANGLE                  = 120,
         PARALLEL               = 121,
         PERPENDICULAR          = 122,
+        // Signed rotation residual using atan2 — pins the signed angle from
+        // a reference direction to a body-fixed direction around a given
+        // rotation axis, equal to a target value. Monotonic over the full
+        // (-pi, +pi] basin around the target; no two-fold sin/cos ambiguity.
+        // Slvs entity convention: ptA = pivot point on axis, entityA =
+        // rotation-axis normal entity, entityB = world reference line,
+        // entityC = body-rotated line. Residual stored as `valA` (radians).
+        SIGNED_ANGLE           = 126,
         ARC_LINE_TANGENT       = 123,
         CUBIC_LINE_TANGENT     = 124,
         CURVE_CURVE_TANGENT    = 125,

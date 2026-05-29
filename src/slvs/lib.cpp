@@ -184,6 +184,7 @@ case SLVS_C_ARC_LINE_TANGENT:    return ConstraintBase::Type::ARC_LINE_TANGENT;
 case SLVS_C_CUBIC_LINE_TANGENT:  return ConstraintBase::Type::CUBIC_LINE_TANGENT;
 case SLVS_C_EQUAL_RADIUS:        return ConstraintBase::Type::EQUAL_RADIUS;
 case SLVS_C_PROJ_PT_DISTANCE:    return ConstraintBase::Type::PROJ_PT_DISTANCE;
+case SLVS_C_SIGNED_ANGLE:        return ConstraintBase::Type::SIGNED_ANGLE;
 case SLVS_C_WHERE_DRAGGED:       return ConstraintBase::Type::WHERE_DRAGGED;
 case SLVS_C_CURVE_CURVE_TANGENT: return ConstraintBase::Type::CURVE_CURVE_TANGENT;
 default: Platform::FatalError("bad constraint type " + std::to_string(type));
@@ -237,6 +238,7 @@ static bool Slvs_CanInitiallySatisfy(const ConstraintBase &c) {
     case ConstraintBase::Type::VERTICAL:
     case ConstraintBase::Type::PERPENDICULAR:
     case ConstraintBase::Type::ANGLE:
+    case ConstraintBase::Type::SIGNED_ANGLE:
     case ConstraintBase::Type::EQUAL_ANGLE:
     case ConstraintBase::Type::ARC_LINE_TANGENT:
     case ConstraintBase::Type::CURVE_CURVE_TANGENT:

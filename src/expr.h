@@ -63,6 +63,13 @@ public:
         COS            = 108,
         ASIN           = 109,
         ACOS           = 110,
+        // Binary again — atan2(a, b) with libm convention atan2(y, x):
+        // `a` is the numerator (y, sine-like), `b` is the denominator
+        // (x, cosine-like). Output is in (-pi, +pi]. Used by SLVS_C_SIGNED_ANGLE
+        // to express a signed rotation residual that's monotonic in actual
+        // angle over the full (-pi, +pi] range — no two-fold ambiguity like
+        // sin/cos alone, no rank degeneracy from sin/cos pairs.
+        ATAN2          = 111,
     };
 
     Op      op;
@@ -97,6 +104,9 @@ public:
     inline Expr *Cos   () { return AnyOp(Op::COS,    NULL); }
     inline Expr *ASin  () { return AnyOp(Op::ASIN,   NULL); }
     inline Expr *ACos  () { return AnyOp(Op::ACOS,   NULL); }
+    // atan2(this, b_) — libm convention: this is the y/sine numerator,
+    // b_ is the x/cosine denominator. Result in (-pi, +pi].
+    inline Expr *ATan2 (Expr *b_) { return AnyOp(Op::ATAN2, b_); }
 
     Expr *PartialWrt(hParam p) const;
     // `sk` is consulted only when the expression tree still contains

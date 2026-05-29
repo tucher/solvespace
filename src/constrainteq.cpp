@@ -26,6 +26,7 @@ bool ConstraintBase::HasLabel() const {
         case Type::ARC_ARC_DIFFERENCE: 
         case Type::ARC_LINE_DIFFERENCE:
         case Type::ANGLE:
+        case Type::SIGNED_ANGLE:
         case Type::COMMENT:
             return true;
 
@@ -77,6 +78,10 @@ bool ConstraintBase::IsProjectible() const {
         case Type::CURVE_CURVE_TANGENT:
         case Type::ARC_LINE_TANGENT:
         case Type::EQUAL_RADIUS:
+        // SIGNED_ANGLE is intrinsically 3D — operates on a rotation axis +
+        // two reference directions in world frame. Not projectible to a 2D
+        // workplane sketch.
+        case Type::SIGNED_ANGLE:
             return false;
     }
     ssassert(false, "Impossible");
@@ -917,6 +922,49 @@ void ConstraintBase::GenerateEquations(IdList<Equation,hEquation> *l,
                 // is equal to zero, perpendicular.
                 AddEq(l, c, 0);
             }
+            return;
+        }
+
+        case Type::SIGNED_ANGLE: {
+            // Signed rotation angle, atan2-based.
+            //
+            // Slot convention:
+            //   entityA → rotation-axis normal (the axis we measure around)
+            //   entityB → world reference direction at theta = 0
+            //   entityC → body-rotated direction (rotates with the body)
+            //   valA    → target angle, in RADIANS (libslvs's only direct
+            //             radian-valued constraint — distinct from ANGLE,
+            //             which carries degrees)
+            //
+            // Residual = atan2(actual - target) wrapped to (-pi, +pi]:
+            //     sin_a = ((wref x bref) . axis) / (|wref|·|bref|)
+            //     cos_a = (wref . bref)          / (|wref|·|bref|)
+            // The 1/(|wref|·|bref|) factor cancels in the atan2's
+            // numerator and denominator scaling, so we don't normalise
+            // explicitly — the residual is invariant to the reference
+            // vectors' magnitudes.
+            //     num = sin_a·cos(target) − cos_a·sin(target)
+            //     den = sin_a·sin(target) + cos_a·cos(target)
+            //     residual = atan2(num, den)
+            // Equivalent to wrap_to_pi(actual − target). Zero iff
+            // actual ≡ target (mod 2pi). Monotonic over (-pi, +pi]
+            // around the target — no two-fold sin/cos ambiguity.
+            EntityBase *axisE = this->sk->GetEntity(entityA);
+            EntityBase *wrefE = this->sk->GetEntity(entityB);
+            EntityBase *brefE = this->sk->GetEntity(entityC);
+            ExprVector axis = axisE->VectorGetExprs();
+            ExprVector wref = wrefE->VectorGetExprs();
+            ExprVector bref = brefE->VectorGetExprs();
+            // Signed perpendicular component (sin-like) and parallel
+            // component (cos-like). Both scale linearly with |wref|·|bref|;
+            // atan2 cancels that scaling, so we leave them unnormalised.
+            Expr *sin_a = (wref.Cross(bref)).Dot(axis.WithMagnitude(Expr::From(1.0)));
+            Expr *cos_a = wref.Dot(bref);
+            Expr *sin_t = exA->Sin();
+            Expr *cos_t = exA->Cos();
+            Expr *num = (sin_a->Times(cos_t))->Minus(cos_a->Times(sin_t));
+            Expr *den = (sin_a->Times(sin_t))->Plus(cos_a->Times(cos_t));
+            AddEq(l, num->ATan2(den), 0);
             return;
         }
 

@@ -929,36 +929,43 @@ void ConstraintBase::GenerateEquations(IdList<Equation,hEquation> *l,
             // Signed rotation angle, atan2-based.
             //
             // Slot convention:
-            //   entityA → rotation-axis normal (the axis we measure around)
-            //   entityB → world reference direction at theta = 0
-            //   entityC → body-rotated direction (rotates with the body)
+            //   entityA → rotation-axis line (the axis we measure around)
+            //   entityB → world reference line (the θ = 0 direction)
+            //   entityC → body-rotated line (rotates with the body)
             //   valA    → target angle, in RADIANS (libslvs's only direct
             //             radian-valued constraint — distinct from ANGLE,
             //             which carries degrees)
             //
-            // Residual = atan2(actual - target) wrapped to (-pi, +pi]:
-            //     sin_a = ((wref x bref) . axis) / (|wref|·|bref|)
-            //     cos_a = (wref . bref)          / (|wref|·|bref|)
-            // The 1/(|wref|·|bref|) factor cancels in the atan2's
-            // numerator and denominator scaling, so we don't normalise
-            // explicitly — the residual is invariant to the reference
-            // vectors' magnitudes.
-            //     num = sin_a·cos(target) − cos_a·sin(target)
-            //     den = sin_a·sin(target) + cos_a·cos(target)
+            // Residual = wrap_to_pi(actual - target) — zero iff actual ≡
+            // target (mod 2pi), monotonic over (-pi, +pi]. Right-hand-
+            // rule sign convention to match the rest of the engine
+            // (`geometry.py::Transform.rotation(axis, angle)`).
+            //
+            //     sin_a =  ((wref x bref) . axis_unit)         right-hand sin
+            //     cos_a =   (wref . bref)                       cos
+            //     num   =   sin_a·cos(target) − cos_a·sin(target)   = sin(actual − target)
+            //     den   =   sin_a·sin(target) + cos_a·cos(target)   = cos(actual − target)
             //     residual = atan2(num, den)
-            // Equivalent to wrap_to_pi(actual − target). Zero iff
-            // actual ≡ target (mod 2pi). Monotonic over (-pi, +pi]
-            // around the target — no two-fold sin/cos ambiguity.
+            //
+            // Sign convention note: `EntityBase::VectorGetExprs()` on a
+            // `LINE_SEGMENT` returns `point[0] − point[1]` (origin minus
+            // tip), so each of `axis`, `wref`, `bref` enters this scope
+            // with the OPPOSITE sign to its physical direction. `cos_a`
+            // (wref · bref) is invariant under joint sign flip; sin_a's
+            // cross product is invariant too, but its dot with axis
+            // picks up one residual sign flip. Negate `sin_a` once to
+            // restore the right-hand-rule signed angle.
             EntityBase *axisE = this->sk->GetEntity(entityA);
             EntityBase *wrefE = this->sk->GetEntity(entityB);
             EntityBase *brefE = this->sk->GetEntity(entityC);
             ExprVector axis = axisE->VectorGetExprs();
             ExprVector wref = wrefE->VectorGetExprs();
             ExprVector bref = brefE->VectorGetExprs();
-            // Signed perpendicular component (sin-like) and parallel
-            // component (cos-like). Both scale linearly with |wref|·|bref|;
-            // atan2 cancels that scaling, so we leave them unnormalised.
-            Expr *sin_a = (wref.Cross(bref)).Dot(axis.WithMagnitude(Expr::From(1.0)));
+            // The 1/(|wref|·|bref|) factor in the geometric sin/cos
+            // cancels between atan2's numerator and denominator (they
+            // scale together), so we leave both unnormalised. The axis
+            // we normalise so the dot product is a true sin component.
+            Expr *sin_a = ((wref.Cross(bref)).Dot(axis.WithMagnitude(Expr::From(1.0))))->Negate();
             Expr *cos_a = wref.Dot(bref);
             Expr *sin_t = exA->Sin();
             Expr *cos_t = exA->Cos();

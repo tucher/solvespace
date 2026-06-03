@@ -38,6 +38,15 @@ if(ENABLE_PYTHON_LIB)
     endif()
     set_target_properties(slvs-py PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_definitions(slvs-py PRIVATE -DSTATIC_LIB)
+    # Stable ABI (abi3) opt-in. When SLVS_PY_LIMITED_API is set to a
+    # hex Python version (e.g. 0x030B0000 for 3.11), the Cython module
+    # is compiled against the CPython limited API, so a single wheel
+    # runs on that minor version and every newer one. Cython
+    # auto-switches to limited-API code paths once Py_LIMITED_API is
+    # defined. Leave unset for a regular version-specific (cp3x) build.
+    if(SLVS_PY_LIMITED_API)
+        target_compile_definitions(slvs-py PRIVATE Py_LIMITED_API=${SLVS_PY_LIMITED_API})
+    endif()
     target_link_libraries(slvs-py PRIVATE slvs-interface)
     set_target_properties(slvs-py PROPERTIES LIBRARY_OUTPUT_NAME solvespace)
     # Where to install the slvs-py module + its Python shim files.

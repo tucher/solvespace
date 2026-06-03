@@ -10,6 +10,8 @@
 
 #include <Eigen/Core>
 #include <Eigen/SparseQR>
+#include <Eigen/SparseCholesky>
+#include <Eigen/OrderingMethods>
 
 namespace SolveSpace {
 
@@ -312,6 +314,14 @@ SubstitutionMap System::SolveBySubstitution() {
 int System::CalculateRank() {
     using namespace Eigen;
     if(mat.n == 0 || mat.m == 0) return 0;
+    // NOTE: this is a rank-revealing SparseQR on the full Jacobian A — a
+    // SECOND factorization, and (unlike the LDLT step solve) it is still
+    // superlinear (~O(n^2.5)) because Eigen's SparseQR does not exploit block
+    // structure. It runs only when the rank test is enabled
+    // (suppress_rank_test=False). Production multi-robot scenes should build
+    // the engine with suppress_rank_test=True (the showroom does); the rank
+    // test is a diagnostic, not a per-tick necessity. Making this near-linear
+    // (rank from the step's LDLT pivots) is deferred — see the upgrade plan.
     SparseQR <SparseMatrix<double>, COLAMDOrdering<int>> solver;
     solver.compute(mat.A.num);
     int result = solver.rank();
@@ -349,10 +359,21 @@ bool System::SolveLinearSystem(const Eigen::SparseMatrix <double> &A,
 {
     if(A.outerSize() == 0) return true;
     using namespace Eigen;
-    SparseQR<SparseMatrix<double>, COLAMDOrdering<int>> solver;
-    solver.compute(A);
-    *X = solver.solve(B);
-    return (solver.info() == Success);
+    // `A` is the SPD (first-kind) normal matrix Aᵀ·A + λI from
+    // SolveLeastSquares — strictly positive-definite by the ridge term, so a
+    // fill-reducing sparse LDLT (AMD ordering) factors it. For a
+    // block-diagonal / bounded-treewidth system this is near-linear, whereas
+    // Eigen's SparseQR on the old A·Aᵀ was empirically ~O(n^2.5) — it did not
+    // exploit the block structure (measured: ~95% of solve time, ~5.7× per
+    // size-doubling on disconnected robots). On the rare event LDLT reports
+    // failure (NaN/Inf in the Jacobian) we return false and let the caller's
+    // designed hard-fail path handle it (Newton non-convergence →
+    // DIDNT_CONVERGE / engine rebuild) — no silent fallback masking a fault.
+    SimplicialLDLT<SparseMatrix<double>, Lower, AMDOrdering<int>> ldlt;
+    ldlt.compute(A);
+    if(ldlt.info() != Success) return false;
+    *X = ldlt.solve(B);
+    return (ldlt.info() == Success);
 }
 
 bool System::SolveLeastSquares() {
@@ -376,17 +397,26 @@ bool System::SolveLeastSquares() {
         }
     }
 
-    // Build the normal-equations matrix into the persistent member
-    // `AAt` (not a stack local!) so the SparseQR pattern cache in
-    // `SolveLinearSystem` can hold references into its storage
-    // across Newton iterations without dangling.
-    AAt = mat.A.num * mat.A.num.transpose();
-    AAt.makeCompressed();
-    VectorXd z(mat.n);
+    // First-kind normal equations (Levenberg–Marquardt / ridge step):
+    //   (AᵀA + λI) X = Aᵀ B,   X then unscaled by the column weights.
+    // We deliberately do NOT use the second-kind form (z=(AAᵀ)⁻¹B; X=Aᵀz):
+    // the tetra body parametrization is inherently rank-deficient (12 params,
+    // 6 gauge DOF per body), so AAᵀ is singular and the second-kind null-space
+    // components of z blow up as 1/λ, leaving a cancellation-noise floor in
+    // X=Aᵀz that stalls Newton below CONVERGE_TOLERANCE. The first-kind form
+    // regularizes X directly and is amplification-free: AᵀB ∈ range(Aᵀ) ⊥
+    // null(AᵀA), so even a tiny λ injects no null-space noise. As λ→0 it
+    // equals the prior pseudoinverse step (precision preserved); λ small and
+    // fixed keeps it ≈ Gauss-Newton. AᵀA is SPD and block-diagonal-preserving,
+    // so the LDLT+AMD factorization stays near-linear.
+    const double lambda = 1e-9;
+    VectorXd Atb = mat.A.num.transpose() * mat.B.num;
+    SparseMatrix<double> I(mat.n, mat.n);
+    I.setIdentity();
+    normalMat = mat.A.num.transpose() * mat.A.num + lambda * I;
+    normalMat.makeCompressed();
 
-    if(!SolveLinearSystem(AAt, mat.B.num, &z)) return false;
-
-    mat.X = mat.A.num.transpose() * z;
+    if(!SolveLinearSystem(normalMat, Atb, &mat.X)) return false;
 
     for(int c = 0; c < mat.n; c++) {
         mat.X[c] *= scale[c];

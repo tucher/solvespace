@@ -167,13 +167,14 @@ public:
     // `FreeAllTemporary`.
     bool jacobian_cache_valid = false;
 
-    // Persistent storage for the normal-equations matrix
-    // `AAt = mat.A.num * mat.A.num.transpose()` that `SolveLeastSquares`
-    // hands to `SolveLinearSystem`. Held on the System (not as a
-    // stack local) because `SparseQR::analyzePattern` retains
-    // references into the analyzed matrix's index storage — the
-    // cache below would dangle if AAt were rebuilt fresh each call.
-    Eigen::SparseMatrix<double> AAt;
+    // Persistent storage for the (first-kind) normal-equations matrix
+    // `normalMat = Aᵀ·A + λI` that `SolveLeastSquares` hands to
+    // `SolveLinearSystem` for a Levenberg–Marquardt / ridge step. Held
+    // on the System (not a stack local) so the factorization can later
+    // reuse a cached symbolic ordering across the Newton iterations of
+    // a single solve (the sparsity pattern is constant within a solve;
+    // only the numeric entries change).
+    Eigen::SparseMatrix<double> normalMat;
 
     // pImpl for the SparseQR linear-solver cache. The cached object
     // holds an `Eigen::SparseQR<…>` whose `analyzePattern` we reuse

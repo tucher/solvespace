@@ -13,6 +13,8 @@
 #include <Eigen/SparseCholesky>
 #include <Eigen/OrderingMethods>
 
+#include <cstdlib>
+
 namespace SolveSpace {
 
 // The solver will converge all unknowns to within this tolerance. This must
@@ -373,6 +375,23 @@ bool System::SolveLinearSystem(const Eigen::SparseMatrix <double> &A,
     ldlt.compute(A);
     if(ldlt.info() != Success) return false;
     *X = ldlt.solve(B);
+    // Derive the column-nullity (system DOF) from the pivots of
+    // A = normalMat = AᵀA + λI. A direction in null(AᵀA) shows up as a
+    // pivot ≈ λ (1e-9), whereas a genuinely-constrained direction's pivot
+    // is the corresponding eigenvalue of AᵀA — orders of magnitude larger
+    // (empirically ≥ ~0.1 vs the ~2e-9 null floor: an ~8-decade gap). The
+    // 1e-6 cutoff sits in that gap; misclassifying a (near-singular) real
+    // pivot as null only forgoes a cache entry (safe), never the reverse.
+    // The caller uses this to refuse caching a non-unique system.
+    {
+        const double null_pivot_cutoff = 1e-6;
+        Eigen::VectorXd D = ldlt.vectorD();
+        int nullity = 0;
+        for(int i = 0; i < D.size(); i++) {
+            if(fabs(D[i]) < null_pivot_cutoff) nullity++;
+        }
+        last_jacobian_nullity = nullity;
+    }
     return (ldlt.info() == Success);
 }
 
@@ -594,6 +613,15 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
             rankOk = true;
             goto didnt_converge;
         }
+        // A system that was unique at cache-build can move into a
+        // non-unique configuration (a kinematic singularity opening up a
+        // free DOF). NewtonSolve just refreshed `last_jacobian_nullity`
+        // from the LDLT pivots; if it's no longer 0 the cached path can't
+        // be trusted for subsequent ticks — drop the cache so the next
+        // solve rebuilds and re-evaluates cacheability.
+        if(last_jacobian_nullity != 0) {
+            owner->InvalidateJacobianCache();
+        }
         rankOk = (!g->suppressDofCalculation) ? TestRank(dof) : true;
         if(!rankOk) {
             if(andFindBad) {
@@ -679,12 +707,12 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
     // alone-loop fired (alone > 1): the cached mat only covers the
     // tag-0 big-system subset, and re-running the alone loop on the
     // next tick could pick different tag assignments and silently
-    // produce wrong results. The current pyactiongraphsim workload
-    // produces 0 alone equations (verified by SLVS_TRACE_ALONE).
+    // produce wrong results.
     can_cache = (alone == 1);
-    if(can_cache) {
-        PromoteJacobianToPersistent(this);
-    }
+    // NB: the actual promote-to-persistent is deferred until after
+    // NewtonSolve, once `last_jacobian_nullity` is known — see below.
+    // Promoting here would deep-copy the symbolic Jacobian every tick for
+    // non-unique (nullity>0) systems whose cache is then refused.
     // Clear dof value in order to have indication when dof is actually not calculated
     if(dof != NULL) *dof = -1;
     // We are suppressing or allowing redundant, so we no need to catch unsolveable + redundant
@@ -718,7 +746,23 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
     // `FindWhichToRemoveToFixJacobian` (called for !rankOk + andFindBad
     // above) rewrites mat to its own ad-hoc form, so don't cache in
     // that case — it invalidated already.
-    jacobian_cache_valid = can_cache && rankOk;
+    // Cache the symbolic Jacobian only when the solution is UNIQUE
+    // (`last_jacobian_nullity == 0`). A non-unique system (free DOF) must
+    // not be cached: reusing the frozen Jacobian while inputs move lets
+    // the min-norm step drift onto a different constraint-satisfying
+    // branch, silently corrupting otherwise well-determined sub-systems
+    // (e.g. an arm sharing the solve group with an under-constrained
+    // body). This is enforced independently of `rankOk` so it holds even
+    // under suppress_rank_test (where rankOk is forced true).
+    jacobian_cache_valid = can_cache && rankOk && (last_jacobian_nullity == 0);
+    if(jacobian_cache_valid) {
+        // Deep-copy the symbolic Jacobian into the persistent heap so it
+        // survives the per-solve temp-arena free and the next tick can
+        // enter via the cache-hit fast path. Done here (not before
+        // NewtonSolve) so non-unique systems — whose cache is refused —
+        // don't pay the copy every tick.
+        PromoteJacobianToPersistent(this);
+    }
     return rankOk ? SolveResult::OKAY : SolveResult::REDUNDANT_OKAY;
 
 didnt_converge:

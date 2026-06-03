@@ -167,6 +167,17 @@ public:
     // `FreeAllTemporary`.
     bool jacobian_cache_valid = false;
 
+    // Column-nullity of the Jacobian, derived from the LDLT pivots of
+    // `normalMat = AᵀA + λI` on the last linear solve (count of pivots
+    // ≈ λ). Equals the system DOF: 0 ⇒ unique solution, >0 ⇒ free DOF /
+    // non-unique. The symbolic-Jacobian cache is sound ONLY when this is
+    // 0 — a non-unique system lets the reused Jacobian + min-norm step
+    // settle into a different (still constraint-satisfying) branch as
+    // inputs move, silently corrupting the solve. Gates `jacobian_cache_valid`
+    // independently of the (suppressible, expensive) rank test, so a
+    // rank-deficient system is never cached even with suppress_rank_test.
+    int last_jacobian_nullity = 0;
+
     // Persistent storage for the (first-kind) normal-equations matrix
     // `normalMat = Aᵀ·A + λI` that `SolveLeastSquares` hands to
     // `SolveLinearSystem` for a Levenberg–Marquardt / ridge step. Held

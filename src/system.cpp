@@ -363,6 +363,17 @@ void System::ComputeNullSpace(std::vector<double> &vectors,
     // Column → param-handle ordering (the same columns nullity was read from).
     params.reserve(n);
     for(int c = 0; c < n; c++) params.push_back(mat.param[c].v);
+    // Take exactly `last_jacobian_nullity` directions — the smallest-singular-
+    // value right vectors of A. This GUARANTEES the basis count equals the
+    // nullity the engine already reported, which the LDLT derives from an
+    // ABSOLUTE pivot cutoff (`σ²+λ < 1e-6` ⇒ σ < 1e-3). A fixed *relative* SVD
+    // threshold disagrees for a near-singular DOF — a mechanism at a kinematic
+    // singularity has σ small but not ~0 (e.g. 1e-4) — which would report
+    // nullity>0 with an EMPTY basis. BDCSVD sorts σ descending, so the
+    // most-null directions are the trailing columns of V.
+    int k = last_jacobian_nullity;
+    if(k <= 0) return;
+    if(k > n) k = n;
     // Guard a pathologically large dense SVD: above this the basis is skipped
     // (the engine still reports the bare DOF count). 4000 cols → 128 MB for V,
     // well past any real kinematic scene; a genuine hit means a modelling bug
@@ -370,17 +381,11 @@ void System::ComputeNullSpace(std::vector<double> &vectors,
     if(n > 4000) return;
     MatrixXd A = MatrixXd(mat.A.num);
     BDCSVD<MatrixXd> svd(A, ComputeFullV);
-    const VectorXd &sv = svd.singularValues();
-    const MatrixXd &V  = svd.matrixV();   // n × n, columns = right-sing. vectors
-    const double smax = (sv.size() > 0) ? sv(0) : 0.0;
-    const double tol  = (smax > 0.0 ? smax : 1.0) * 1e-7;
-    for(int c = 0; c < n; c++) {
-        // sv has min(m,n) entries; V columns past that index pair with σ=0.
-        const double s = (c < sv.size()) ? sv(c) : 0.0;
-        if(s <= tol) {
-            for(int r = 0; r < n; r++) vectors.push_back(V(r, c));
-            nVec++;
-        }
+    const MatrixXd &V = svd.matrixV();   // n × n, columns = right-sing. vectors
+    for(int idx = 0; idx < k; idx++) {
+        const int c = n - 1 - idx;       // trailing = smallest-σ columns
+        for(int r = 0; r < n; r++) vectors.push_back(V(r, c));
+        nVec++;
     }
 }
 

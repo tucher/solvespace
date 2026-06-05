@@ -353,10 +353,12 @@ bool System::TestRank(int *dof, int *rank) {
 // directions in param space the constraints don't resist.
 //-----------------------------------------------------------------------------
 void System::ComputeNullSpace(std::vector<double> &vectors,
-                              std::vector<uint32_t> &params, int &nVec) {
+                              std::vector<uint32_t> &params,
+                              std::vector<double> &sigmas, int &nVec) {
     using namespace Eigen;
     vectors.clear();
     params.clear();
+    sigmas.clear();
     nVec = 0;
     const int n = mat.n, m = mat.m;
     if(n <= 0 || m <= 0) return;
@@ -382,9 +384,14 @@ void System::ComputeNullSpace(std::vector<double> &vectors,
     MatrixXd A = MatrixXd(mat.A.num);
     BDCSVD<MatrixXd> svd(A, ComputeFullV);
     const MatrixXd &V = svd.matrixV();   // n × n, columns = right-sing. vectors
+    const VectorXd &sv = svd.singularValues();   // length min(m,n), descending
     for(int idx = 0; idx < k; idx++) {
         const int c = n - 1 - idx;       // trailing = smallest-σ columns
         for(int r = 0; r < n; r++) vectors.push_back(V(r, c));
+        // The matching singular value: how close to a TRUE free DoF this is.
+        // ~0 ⇒ a genuinely unconstrained DoF (missing constraint); small but
+        // finite (e.g. 1e-4) ⇒ a near-singular pose (trajectory/gauge issue).
+        sigmas.push_back(c < sv.size() ? sv(c) : 0.0);
         nVec++;
     }
 }

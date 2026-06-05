@@ -1177,13 +1177,15 @@ Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t shg, Slvs_hConst
 }
 
 void Slvs_GetNullSpace(Slvs_Solver *solver, double **vectors,
-                       uint32_t **params, int *nParams, int *nVecs)
+                       uint32_t **params, double **sigmas,
+                       int *nParams, int *nVecs)
 {
     SolveSpace::Solver *solver_cpp = as_solver(solver);
     std::vector<double> vecs;
     std::vector<uint32_t> pars;
+    std::vector<double> sigs;
     int nv = 0;
-    solver_cpp->sys->ComputeNullSpace(vecs, pars, nv);
+    solver_cpp->sys->ComputeNullSpace(vecs, pars, sigs, nv);
     *nParams = static_cast<int>(pars.size());
     *nVecs   = nv;
     if(!pars.empty()) {
@@ -1197,6 +1199,12 @@ void Slvs_GetNullSpace(Slvs_Solver *solver, double **vectors,
         for(size_t i = 0; i < vecs.size(); ++i) (*vectors)[i] = vecs[i];
     } else {
         *vectors = nullptr;
+    }
+    if(!sigs.empty()) {
+        *sigmas = static_cast<double *>(malloc(sizeof(double) * sigs.size()));
+        for(size_t i = 0; i < sigs.size(); ++i) (*sigmas)[i] = sigs[i];
+    } else {
+        *sigmas = nullptr;
     }
 }
 

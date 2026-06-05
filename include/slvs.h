@@ -579,12 +579,15 @@ DLL void Slvs_ClearSketch(Slvs_Solver *solver);
  * space — the free-motion directions (the system's free DOF). `*vectors` is set
  * to a heap array of `(*nVecs) * (*nParams)` doubles, row-major (basis vector k
  * occupies columns [k*nParams, (k+1)*nParams)); `*params` to a heap array of
- * `*nParams` param-handles giving the param for each column. Both are NULL when
- * the system is fully determined (nVecs == 0). NOTE: the caller must free both
+ * `*nParams` param-handles giving the param for each column; `*sigmas` to a heap
+ * array of `*nVecs` singular values (one per basis vector — ~0 means a genuinely
+ * free DOF, small-but-finite means a near-singular pose). All NULL when the
+ * system is fully determined (nVecs == 0). NOTE: the caller must free all three
  * arrays with `free()`.
  */
 DLL void Slvs_GetNullSpace(Slvs_Solver *solver, double **vectors,
-                           uint32_t **params, int *nParams, int *nVecs);
+                           uint32_t **params, double **sigmas,
+                           int *nParams, int *nVecs);
 
 #ifdef __cplusplus
 }

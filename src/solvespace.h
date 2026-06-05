@@ -151,7 +151,8 @@ public:
     // `mat.A.num` (left valid after the solve; its Expr* sym twin is freed
     // by FreeAllTemporary) — must NOT re-evaluate the symbolic Jacobian.
     void ComputeNullSpace(std::vector<double> &vectors,
-                          std::vector<uint32_t> &params, int &nVec);
+                          std::vector<uint32_t> &params,
+                          std::vector<double> &sigmas, int &nVec);
 
     void WriteEquationsExceptFor(hConstraint hc, Group *g);
     void FindWhichToRemoveToFixJacobian(Group *g, List<hConstraint> *bad,

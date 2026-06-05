@@ -143,6 +143,16 @@ public:
     bool WriteJacobian(int tag);
     void EvalJacobian();
 
+    // Diagnostic (error path only): compute an orthonormal basis of the
+    // null space of the last solve's numeric Jacobian `mat.A.num` — each
+    // basis vector is a free-motion direction in param space (the system's
+    // DOF). `vectors` is filled row-major nVec × n (n = mat.n columns);
+    // `params` is the param-handle for each column. Reads the EXISTING
+    // `mat.A.num` (left valid after the solve; its Expr* sym twin is freed
+    // by FreeAllTemporary) — must NOT re-evaluate the symbolic Jacobian.
+    void ComputeNullSpace(std::vector<double> &vectors,
+                          std::vector<uint32_t> &params, int &nVec);
+
     void WriteEquationsExceptFor(hConstraint hc, Group *g);
     void FindWhichToRemoveToFixJacobian(Group *g, List<hConstraint> *bad,
                                         bool forceDofCheck);

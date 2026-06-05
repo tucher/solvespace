@@ -574,6 +574,18 @@ DLL void Slvs_MarkDragged(Slvs_Solver *solver, Slvs_Entity ptA);
 DLL Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t hg, Slvs_hConstraint **bad);
 DLL void Slvs_ClearSketch(Slvs_Solver *solver);
 
+/**
+ * Diagnostic: after a solve, return a basis of the constraint Jacobian's null
+ * space — the free-motion directions (the system's free DOF). `*vectors` is set
+ * to a heap array of `(*nVecs) * (*nParams)` doubles, row-major (basis vector k
+ * occupies columns [k*nParams, (k+1)*nParams)); `*params` to a heap array of
+ * `*nParams` param-handles giving the param for each column. Both are NULL when
+ * the system is fully determined (nVecs == 0). NOTE: the caller must free both
+ * arrays with `free()`.
+ */
+DLL void Slvs_GetNullSpace(Slvs_Solver *solver, double **vectors,
+                           uint32_t **params, int *nParams, int *nVecs);
+
 #ifdef __cplusplus
 }
 #endif

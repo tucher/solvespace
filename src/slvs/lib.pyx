@@ -97,6 +97,7 @@ cdef extern from "slvs.h" nogil:
 
     void Slvs_MarkDragged(Slvs_Solver *solver, Slvs_Entity ptA)
     Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, Slvs_hGroup hg, Slvs_hConstraint **bad) nogil
+    void Slvs_GetNullSpace(Slvs_Solver *solver, double **vectors, uint32_t **params, int *nParams, int *nVecs)
     double Slvs_GetParamValue(Slvs_Solver *solver, int ph)
     double Slvs_SetParamValue(Slvs_Solver *solver, int ph, double value)
     double Slvs_GetConstraintValue(Slvs_Solver *solver, int ch)
@@ -453,6 +454,30 @@ cdef class Solver:
                     bad.append(badp[i])
                 free(badp)
             return result, bad
+
+    def get_null_space(self):
+        """After a solve, return ``(params, vectors)`` describing the free
+        DOF of the system. ``params`` is the list of param-handles, one per
+        Jacobian column; ``vectors`` is a list of null-space basis vectors,
+        each a list of ``len(params)`` floats giving a free-motion direction
+        in param space. Both empty when the system is fully determined
+        (no free DOF). Diagnostic — meant for the under-constrained error
+        path, not the steady-state tick."""
+        cdef double *vecs = NULL
+        cdef uint32_t *pars = NULL
+        cdef int nParams = 0
+        cdef int nVecs = 0
+        cdef int i, k, j
+        Slvs_GetNullSpace(self.handle, &vecs, &pars, &nParams, &nVecs)
+        params = [pars[i] for i in range(nParams)]
+        vectors = []
+        for k in range(nVecs):
+            vectors.append([vecs[k * nParams + j] for j in range(nParams)])
+        if pars != NULL:
+            free(pars)
+        if vecs != NULL:
+            free(vecs)
+        return params, vectors
 
     def get_param_value(self, ph: int):
         return Slvs_GetParamValue(self.handle, ph)

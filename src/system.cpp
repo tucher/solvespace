@@ -9,6 +9,7 @@
 #include "solvespace.h"
 
 #include <Eigen/Core>
+#include <Eigen/SVD>
 #include <Eigen/SparseQR>
 #include <Eigen/SparseCholesky>
 #include <Eigen/OrderingMethods>
@@ -340,6 +341,47 @@ bool System::TestRank(int *dof, int *rank) {
         *rank = jacobianRank;
     }
     return jacobianRank == mat.m;
+}
+
+//-----------------------------------------------------------------------------
+// Null-space basis of the constraint Jacobian — the free-motion directions
+// (system DOF). Diagnostic only; called by the engine on the under-constrained
+// error path before it raises, so cost is irrelevant. Reads the numeric
+// `mat.A.num` the last solve left valid (its symbolic Expr* twin is gone after
+// FreeAllTemporary, so do NOT call EvalJacobian here). A dense SVD of A gives
+// the right-singular vectors; those with ~0 singular value span null(A) = the
+// directions in param space the constraints don't resist.
+//-----------------------------------------------------------------------------
+void System::ComputeNullSpace(std::vector<double> &vectors,
+                              std::vector<uint32_t> &params, int &nVec) {
+    using namespace Eigen;
+    vectors.clear();
+    params.clear();
+    nVec = 0;
+    const int n = mat.n, m = mat.m;
+    if(n <= 0 || m <= 0) return;
+    // Column → param-handle ordering (the same columns nullity was read from).
+    params.reserve(n);
+    for(int c = 0; c < n; c++) params.push_back(mat.param[c].v);
+    // Guard a pathologically large dense SVD: above this the basis is skipped
+    // (the engine still reports the bare DOF count). 4000 cols → 128 MB for V,
+    // well past any real kinematic scene; a genuine hit means a modelling bug
+    // we'd rather not OOM diagnosing.
+    if(n > 4000) return;
+    MatrixXd A = MatrixXd(mat.A.num);
+    BDCSVD<MatrixXd> svd(A, ComputeFullV);
+    const VectorXd &sv = svd.singularValues();
+    const MatrixXd &V  = svd.matrixV();   // n × n, columns = right-sing. vectors
+    const double smax = (sv.size() > 0) ? sv(0) : 0.0;
+    const double tol  = (smax > 0.0 ? smax : 1.0) * 1e-7;
+    for(int c = 0; c < n; c++) {
+        // sv has min(m,n) entries; V columns past that index pair with σ=0.
+        const double s = (c < sv.size()) ? sv(c) : 0.0;
+        if(s <= tol) {
+            for(int r = 0; r < n; r++) vectors.push_back(V(r, c));
+            nVec++;
+        }
+    }
 }
 
 // pImpl placeholder — kept as a struct so the explicit `~System()`

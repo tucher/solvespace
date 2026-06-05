@@ -274,6 +274,9 @@ def clear_sketch() -> None:
 def solve_sketch(grouph: int, calculateFaileds: bool) -> Slvs_SolveResult:
     ...
 
+def get_null_space() -> tuple[list[int], list[list[float]]]:
+    ...
+
 def get_param_value(ph: int) -> float:
     ...
 

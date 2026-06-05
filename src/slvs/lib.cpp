@@ -1176,6 +1176,30 @@ Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t shg, Slvs_hConst
     return sr;
 }
 
+void Slvs_GetNullSpace(Slvs_Solver *solver, double **vectors,
+                       uint32_t **params, int *nParams, int *nVecs)
+{
+    SolveSpace::Solver *solver_cpp = as_solver(solver);
+    std::vector<double> vecs;
+    std::vector<uint32_t> pars;
+    int nv = 0;
+    solver_cpp->sys->ComputeNullSpace(vecs, pars, nv);
+    *nParams = static_cast<int>(pars.size());
+    *nVecs   = nv;
+    if(!pars.empty()) {
+        *params = static_cast<uint32_t *>(malloc(sizeof(uint32_t) * pars.size()));
+        for(size_t i = 0; i < pars.size(); ++i) (*params)[i] = pars[i];
+    } else {
+        *params = nullptr;
+    }
+    if(!vecs.empty()) {
+        *vectors = static_cast<double *>(malloc(sizeof(double) * vecs.size()));
+        for(size_t i = 0; i < vecs.size(); ++i) (*vectors)[i] = vecs[i];
+    } else {
+        *vectors = nullptr;
+    }
+}
+
 double Slvs_GetParamValue(Slvs_Solver *solver, uint32_t ph)
 {
     SolveSpace::Solver *solver_cpp = as_solver(solver);

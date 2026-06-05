@@ -82,7 +82,7 @@ class Solver;
 
 class System {
 public:
-    enum { MAX_UNKNOWNS = 2048 };
+    enum { MAX_UNKNOWNS = (1 << 19) };
 
     // Back-pointer to the owning Solver. Set in `Solver::Solver()`.
     // Used by methods that need access to the sketch (sister field

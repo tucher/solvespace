@@ -1142,6 +1142,10 @@ Slvs_SolveResult Slvs_SolveSketch(Slvs_Solver *solver, uint32_t shg, Slvs_hConst
     Slvs_SolveResult sr = {};
     sr.dof = dof;
     sr.nbad = badList.n;
+    // Jacobian column-nullity from the last LDLT solve (see slvs.h). Always
+    // populated — used by the engine to hard-fail on free DoF even under
+    // suppress_rank_test (where `dof` stays -1).
+    sr.nullity = solver_cpp->sys->last_jacobian_nullity;
     if(bad) {
         if(sr.nbad <= 0) {
             *bad = nullptr;

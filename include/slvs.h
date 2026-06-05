@@ -209,6 +209,12 @@ typedef struct {
     int                 result;
     int                 dof;
     int                 nbad;
+    /* Column-nullity of the Jacobian on the last solve, derived from the
+     * LDLT pivots (count of pivots ~ lambda). 0 => unique solution; >0 =>
+     * free DOF / non-unique. Computed on every solve regardless of the
+     * (suppressible, expensive) rank test, so callers can cheaply reject
+     * under-constrained systems even when dof is left at -1. */
+    int                 nullity;
 } Slvs_SolveResult;
 
 /* Our base coordinate system has basis vectors

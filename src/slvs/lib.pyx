@@ -38,6 +38,7 @@ cdef extern from "slvs.h" nogil:
         int result
         int dof
         int nbad
+        int nullity
 
     # Pure-math helpers — no Solver state involved.
     void Slvs_QuaternionU(double qw, double qx, double qy, double qz,

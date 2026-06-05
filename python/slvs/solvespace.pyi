@@ -94,6 +94,7 @@ class Slvs_SolveResult(TypedDict):
   dof: int
   rank: int
   bad: int
+  nullity: int
 
 E_FREE_IN_3D : Slvs_Entity
 E_NONE : Slvs_Entity

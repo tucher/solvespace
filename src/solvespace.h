@@ -167,6 +167,15 @@ public:
     // `FreeAllTemporary`.
     bool jacobian_cache_valid = false;
 
+    // Substitution map (`(a-b)=0` param folds from `SolveBySubstitution`)
+    // saved when the symbolic Jacobian is cached. The cache-hit fast path
+    // replays it to set each folded-out param to its target's freshly-solved
+    // value — those params are absent from `mat`, so without this they freeze
+    // at the cache-build pose (e.g. a serial arm's coincident joints → broken
+    // intermediate links). Param* point into `param`, stable while cached;
+    // cleared by `Solver::InvalidateJacobianCache`.
+    SubstitutionMap cached_subMap;
+
     // Column-nullity of the Jacobian, derived from the LDLT pivots of
     // `normalMat = AᵀA + λI` on the last linear solve (count of pivots
     // ≈ λ). Equals the system DOF: 0 ⇒ unique solution, >0 ⇒ free DOF /

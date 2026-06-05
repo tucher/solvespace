@@ -638,6 +638,18 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
             pp->known = true;
             pp->free  = p.free;
         }
+        // Substituted params (folded out by SolveBySubstitution at cache
+        // build) are absent from the solved system, so the loop above wrote
+        // them stale. Set each to its substitution target's freshly-solved
+        // value — exactly what the slow-path write-back does via `subMap`.
+        // Without this they FREEZE at the build pose on every cache hit: e.g.
+        // a serial DH arm's coincident joint points stay put, so intermediate
+        // links are broken while the end-effector (built from solved params)
+        // looks correct. (`cached_subMap`'s Param* point into `param`, kept
+        // stable for the cache's lifetime; cleared on InvalidateJacobianCache.)
+        for(auto &kv : cached_subMap) {
+            owner->sk->GetParam(kv.first)->val = kv.second->val;
+        }
         return rankOk ? SolveResult::OKAY : SolveResult::REDUNDANT_OKAY;
     }
     // ── Slow path: build mat from scratch ──────────────────────────
@@ -733,6 +745,11 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
         // NewtonSolve) so non-unique systems — whose cache is refused —
         // don't pay the copy every tick.
         PromoteJacobianToPersistent(this);
+        // Cache the substitution map so the cache-hit fast path can rebuild
+        // the folded-out (substituted) params' values each tick — they're
+        // not in `mat` and would otherwise freeze at this build pose. Param*
+        // values point into `param`, kept stable for the cache's lifetime.
+        cached_subMap = subMap;
     }
     return rankOk ? SolveResult::OKAY : SolveResult::REDUNDANT_OKAY;
 

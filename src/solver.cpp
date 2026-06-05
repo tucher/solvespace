@@ -45,6 +45,9 @@ void Solver::InvalidateJacobianCache() {
     // back-pointer so any later `System::Solve` rebuilds from
     // scratch. (sys->jacobian_cache_valid is added in Phase 2.3.)
     sys->jacobian_cache_valid = false;
+    // Drop the cached substitution map too — its Param* point into `param`,
+    // which the next slow-path solve will rebuild.
+    sys->cached_subMap.clear();
 }
 
 }  // namespace SolveSpace

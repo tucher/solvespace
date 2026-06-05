@@ -583,7 +583,6 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
     // don't jump across a local's initialisation (ill-formed for any
     // non-trivially-initialised local — `SubstitutionMap` is a
     // `std::unordered_map` with a non-trivial default ctor).
-    bool can_cache = false;
     bool rankOk;
     SubstitutionMap subMap;
     // ── Phase 2 cache-hit fast path ─────────────────────────────────
@@ -665,60 +664,32 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
         subMap = SolveBySubstitution();
     }
 
-    // Before solving the big system, see if we can find any equations that
-    // are soluble alone. This can be a huge speedup. We don't know whether
-    // the system is consistent yet, but if it isn't then we'll catch that
-    // later.
-    int alone;
-    alone = 1;
-    for(auto &e : eq) {
-        if(e.tag != 0)
-            continue;
-
-        hParam hp = e.e->ReferencedParams(&param);
-        if(hp == Expr::NO_PARAMS) continue;
-        if(hp == Expr::MULTIPLE_PARAMS) continue;
-
-        Param *p = param.FindById(hp);
-        if(p->tag != 0) continue; // let rank test catch inconsistency
-
-        e.tag  = alone;
-        p->tag = alone;
-        WriteJacobian(alone);
-        if(!NewtonSolve()) {
-            // We don't do the rank test, so let's arbitrarily return
-            // the DIDNT_CONVERGE result here.
-            rankOk = true;
-            // Failed to converge, bail out early
-            goto didnt_converge;
-        }
-        alone++;
-    }
-
-    // Now write the Jacobian for what's left, and do a rank test; that
-    // tells us if the system is inconsistently constrained.
+    // Write the Jacobian for the whole (post-substitution) system and do a
+    // rank test; that tells us if the system is inconsistently constrained.
+    //
+    // NOTE: we intentionally do NOT peel "soluble-alone" single-parameter
+    // equations into separate 1×1 Newton solves anymore. That upstream
+    // optimisation predated the SimplicialLDLT+AMD linear solve
+    // (`SolveLeastSquares` / `SolveLinearSystem`): single-param equations are
+    // now trivial sparse rows that cost ~nothing in the block-diagonal big
+    // solve, so peeling them buys nothing — and it forced
+    // `jacobian_cache_valid` off for any scene built from independent
+    // mechanisms (the cache only ever covered the tag-0 remainder). Folding
+    // them into the one big system makes those scenes cacheable like any
+    // coupled mechanism. See the symbolic-Jacobian cache history for context.
     if(!WriteJacobian(0)) {
         return SolveResult::TOO_MANY_UNKNOWNS;
     }
-    // Promote mat.A.sym + mat.B.sym Expr trees from the per-solve
-    // temp arena into the persistent per-Solver heap. This is the
-    // sole copy on the slow path; subsequent solves enter via the
-    // cache-hit branch at the top. Caching is suppressed if the
-    // alone-loop fired (alone > 1): the cached mat only covers the
-    // tag-0 big-system subset, and re-running the alone loop on the
-    // next tick could pick different tag assignments and silently
-    // produce wrong results.
-    can_cache = (alone == 1);
-    // NB: the actual promote-to-persistent is deferred until after
-    // NewtonSolve, once `last_jacobian_nullity` is known — see below.
-    // Promoting here would deep-copy the symbolic Jacobian every tick for
-    // non-unique (nullity>0) systems whose cache is then refused.
+    // The actual promote-to-persistent is deferred until after NewtonSolve,
+    // once `last_jacobian_nullity` is known — see below. Promoting here would
+    // deep-copy the symbolic Jacobian every tick for non-unique (nullity>0)
+    // systems whose cache is then refused.
     // Clear dof value in order to have indication when dof is actually not calculated
     if(dof != NULL) *dof = -1;
     // We are suppressing or allowing redundant, so we no need to catch unsolveable + redundant
     rankOk = (!g->suppressDofCalculation && !g->allowRedundant) ? TestRank(dof) : true;
 
-    // And do the leftovers as one big system
+    // Solve the whole system.
     if(!NewtonSolve()) {
         goto didnt_converge;
     }
@@ -754,7 +725,7 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
     // (e.g. an arm sharing the solve group with an under-constrained
     // body). This is enforced independently of `rankOk` so it holds even
     // under suppress_rank_test (where rankOk is forced true).
-    jacobian_cache_valid = can_cache && rankOk && (last_jacobian_nullity == 0);
+    jacobian_cache_valid = rankOk && (last_jacobian_nullity == 0);
     if(jacobian_cache_valid) {
         // Deep-copy the symbolic Jacobian into the persistent heap so it
         // survives the per-solve temp-arena free and the next tick can

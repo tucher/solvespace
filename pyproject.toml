@@ -46,6 +46,12 @@ ENABLE_OPENMP = "OFF"
 FORCE_VENDORED_Eigen3 = "ON"
 ENABLE_LTO = "ON"
 ENABLE_PYTHON_LIB = "ON"
+# Keep the arm64 wheel runnable on the Raspberry Pi 4 (Cortex-A72 =
+# ARMv8.0-A). The vendored mimalloc defaults MI_OPT_ARCH=ON on arm64,
+# which compiles it with -march=armv8.1-a and emits LSE atomics the
+# A72 lacks -> "Illegal instruction". MI_NO_OPT_ARCH has priority over
+# MI_OPT_ARCH (plain MI_OPT_ARCH=OFF gets re-forced ON for arm64).
+MI_NO_OPT_ARCH = "ON"
 
 [tool.cibuildwheel]
 build-verbosity = 1

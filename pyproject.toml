@@ -27,8 +27,12 @@ classifiers = [
 
 [tool.scikit-build]
 wheel.expand-macos-universal-tags = true
-build.verbose = true
+# Quiet by default: scikit-build-core prints the captured cmake/ninja output
+# only on failure. Set to true to debug.
+build.verbose = false
 cmake.build-type = "RelWithDebInfo"
+# -Wno-dev: silence cmake developer/policy warnings (e.g. CMP0177), not real diagnostics.
+cmake.args = ["-Wno-dev"]
 build.targets = ["slvs-py"]
 install.components = ["python"]
 sdist.include = [

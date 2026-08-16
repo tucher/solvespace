@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core", "Cython", "cmake==3.31.6", "ninja"]
+requires = ["scikit-build-core", "Cython"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -31,6 +31,8 @@ wheel.expand-macos-universal-tags = true
 # only on failure. Set to true to debug.
 build.verbose = false
 cmake.build-type = "RelWithDebInfo"
+# 3.31.6 floor for when scikit-build provisions cmake (builds also supply it on PATH).
+cmake.version = ">=3.31.6"
 # -Wno-dev: silence cmake developer/policy warnings (e.g. CMP0177), not real diagnostics.
 cmake.args = ["-Wno-dev"]
 build.targets = ["slvs-py"]

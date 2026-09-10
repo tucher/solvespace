@@ -31,11 +31,40 @@
 #include "handle.h"
 #include "param.h"
 
-// Forward-declared so this header doesn't pull in <mimalloc.h>.
-struct mi_heap_s;
-typedef struct mi_heap_s mi_heap_t;
+#include <cstddef>
+#include <vector>
 
 namespace SolveSpace {
+
+// Chunked bump arena for Expr nodes, owned by one Solver and freed with it.
+//
+// Deliberately not a thread-bound allocator: a Solver is created, solved and
+// destroyed by whichever threads the embedder chooses, and an allocator tied
+// to the thread that happened to allocate first dies with that thread. Plain
+// malloc'd chunks are valid on any thread, so the Solver stays as
+// thread-agnostic as its documented contract claims.
+//
+// Allocations are never individually freed; the whole arena is released at
+// once, which is exactly the Jacobian cache's lifetime.
+class ExprArena {
+public:
+    ExprArena() = default;
+    ~ExprArena();
+
+    ExprArena(const ExprArena&)            = delete;
+    ExprArena& operator=(const ExprArena&) = delete;
+
+    // Zeroed, pointer-aligned; valid until this arena is destroyed.
+    void *Alloc(size_t size);
+
+private:
+    struct Chunk {
+        char  *base;
+        size_t used;
+        size_t cap;
+    };
+    std::vector<Chunk> chunks;
+};
 
 class Sketch;
 class System;
@@ -66,13 +95,13 @@ public:
     // holds `Expr *` pointers in `System::mat.A.sym` / `mat.B.sym`
     // that the per-solve temp arena would otherwise free at the end
     // of each solve. Lazy-allocated on first use (see
-    // `Solver::EnsurePersistentHeap`); destroyed and recreated by
+    // `Solver::EnsurePersistentArena`); destroyed and recreated by
     // `Solver::InvalidateJacobianCache` and in `~Solver`.
-    mi_heap_t *persistent_heap = nullptr;
+    ExprArena *persistent_arena = nullptr;
 
-    // Returns the persistent heap, allocating it on first call.
-    mi_heap_t *EnsurePersistentHeap();
-    // Wipes the persistent heap, destroying every cached Expr in one
+    // Returns the persistent arena, allocating it on first call.
+    ExprArena *EnsurePersistentArena();
+    // Wipes the persistent arena, destroying every cached Expr in one
     // pass. Sets `system->jacobian_cache_valid = false`. Called from
     // every mutating Slvs_* entry point that could change the symbolic
     // structure (see slvs/lib.cpp).

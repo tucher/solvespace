@@ -15,9 +15,7 @@
 #include "dsc.h"
 #include "param.h"
 
-// Forward-declared so this header doesn't pull in <mimalloc.h>.
-struct mi_heap_s;
-typedef struct mi_heap_s mi_heap_t;
+namespace SolveSpace { class ExprArena; }
 
 namespace SolveSpace {
 
@@ -148,7 +146,7 @@ public:
     // `FreeAllTemporary`. Op::PARAM_PTR / Op::CONST_PTR leaves keep
     // their pointers — the caller is responsible for ensuring the
     // pointed-to Param / external double outlives the copy.
-    Expr *DeepCopyIntoHeap(mi_heap_t *heap) const;
+    Expr *DeepCopyIntoArena(ExprArena *arena) const;
 
     static Expr *Parse(const std::string &input, std::string *error);
     static Expr *From(const std::string &input, bool popUpError);

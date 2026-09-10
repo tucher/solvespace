@@ -73,26 +73,26 @@ void Sketch::AddParamKeepingHandle(Param *p) {
 #undef INVALIDATE_CACHE_IF_OWNED
 
 // Walk `mat.A.sym` and `mat.B.sym` and deep-copy every Expr tree into
-// `solver->persistent_heap`, replacing the pointers in-place. After
+// `solver->persistent_arena`, replacing the pointers in-place. After
 // this call, none of the cached Exprs reference the per-solve
 // TempArena that `Slvs_SolveSketch` is about to free; the cache
 // survives across solves until invalidated.
 //
 // Caller invariant: `mat.A.sym` and `mat.B.sym` were just populated
 // by `WriteJacobian`. The Exprs are still in the temp arena at
-// promotion time (DeepCopyIntoHeap reads them); we replace each
+// promotion time (DeepCopyIntoArena reads them); we replace each
 // pointer with the persistent copy.
 static void PromoteJacobianToPersistent(System *sys) {
-    mi_heap_t *heap = sys->owner->EnsurePersistentHeap();
+    ExprArena *arena = sys->owner->EnsurePersistentArena();
     using namespace Eigen;
     const int outer = sys->mat.A.sym.outerSize();
     for(int k = 0; k < outer; k++) {
         for(SparseMatrix<Expr *>::InnerIterator it(sys->mat.A.sym, k); it; ++it) {
-            it.valueRef() = it.value()->DeepCopyIntoHeap(heap);
+            it.valueRef() = it.value()->DeepCopyIntoArena(arena);
         }
     }
     for(size_t i = 0; i < sys->mat.B.sym.size(); i++) {
-        sys->mat.B.sym[i] = sys->mat.B.sym[i]->DeepCopyIntoHeap(heap);
+        sys->mat.B.sym[i] = sys->mat.B.sym[i]->DeepCopyIntoArena(arena);
     }
 }
 
@@ -672,9 +672,11 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
         // from the LDLT pivots; if it's no longer 0 the cached path can't
         // be trusted for subsequent ticks — drop the cache so the next
         // solve rebuilds and re-evaluates cacheability.
-        if(last_jacobian_nullity != 0) {
-            owner->InvalidateJacobianCache();
-        }
+        // Deferred: dropping the cache frees every Expr in `mat.A.sym` /
+        // `mat.B.sym` and clears `cached_subMap`, both of which this solve
+        // still reads below. The drop is for the NEXT solve, so it happens
+        // once this one is done with them.
+        const bool drop_cache_after_use = (last_jacobian_nullity != 0);
         rankOk = (!g->suppressDofCalculation) ? TestRank(dof) : true;
         if(!rankOk) {
             if(andFindBad) {
@@ -703,6 +705,9 @@ SolveResult System::Solve(Group *g, int *dof, List<hConstraint> *bad,
         // stable for the cache's lifetime; cleared on InvalidateJacobianCache.)
         for(auto &kv : cached_subMap) {
             owner->sk->GetParam(kv.first)->val = kv.second->val;
+        }
+        if(drop_cache_after_use) {
+            owner->InvalidateJacobianCache();
         }
         return rankOk ? SolveResult::OKAY : SolveResult::REDUNDANT_OKAY;
     }

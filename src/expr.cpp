@@ -8,7 +8,7 @@
 //-----------------------------------------------------------------------------
 #include "solvespace.h"
 
-#include <mimalloc.h>
+#include "solver.h"
 
 namespace SolveSpace {
 
@@ -16,12 +16,12 @@ static inline Expr *AllocExpr() {
     return (Expr *)Platform::AllocTemporary(sizeof(Expr));
 }
 
-// Used by `DeepCopyIntoHeap` to allocate every node of the copied tree
-// directly from a caller-supplied heap (the Solver's persistent heap,
+// Used by `DeepCopyIntoArena` to allocate every node of the copied tree
+// directly from a caller-supplied arena (the Solver's persistent arena,
 // in practice). Doesn't touch the thread-local `TempArena`, so the
 // resulting tree survives `FreeAllTemporary`.
-static inline Expr *AllocExprIn(mi_heap_t *heap) {
-    return (Expr *)mi_heap_zalloc(heap, sizeof(Expr));
+static inline Expr *AllocExprIn(ExprArena *arena) {
+    return (Expr *)arena->Alloc(sizeof(Expr));
 }
 
 ExprVector ExprVector::From(Expr *x, Expr *y, Expr *z) {
@@ -331,12 +331,12 @@ Expr *Expr::DeepCopy() const {
     return n;
 }
 
-Expr *Expr::DeepCopyIntoHeap(mi_heap_t *heap) const {
-    Expr *n = AllocExprIn(heap);
+Expr *Expr::DeepCopyIntoArena(ExprArena *arena) const {
+    Expr *n = AllocExprIn(arena);
     *n = *this;
     int c = n->Children();
-    if(c > 0) n->a = a->DeepCopyIntoHeap(heap);
-    if(c > 1) n->b = b->DeepCopyIntoHeap(heap);
+    if(c > 0) n->a = a->DeepCopyIntoArena(arena);
+    if(c > 1) n->b = b->DeepCopyIntoArena(arena);
     return n;
 }
 

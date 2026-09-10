@@ -174,7 +174,7 @@ public:
     // solve and remain valid for the current one. Reset by every
     // mutating Slvs_* entry point (via `Solver::InvalidateJacobianCache`).
     // The cached Expr trees live in the per-Solver persistent heap
-    // (see `Solver::persistent_heap`), so they survive the per-solve
+    // (see `Solver::persistent_arena`), so they survive the per-solve
     // `FreeAllTemporary`.
     bool jacobian_cache_valid = false;
 
